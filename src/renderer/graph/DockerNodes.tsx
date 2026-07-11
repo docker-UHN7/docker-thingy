@@ -1,15 +1,10 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { ServiceNodeModel } from "../../shared/contracts";
+import type { PortMapping, ServiceNodeModel } from "../../shared/contracts";
 
-type LayoutDirection = "RIGHT" | "DOWN";
-type ServiceNodeData = ServiceNodeModel & { layoutDirection: LayoutDirection };
-type ServiceFlowNode = Node<ServiceNodeData, "serviceNode">;
-type RegionNodeData = { label: string };
-type RegionFlowNode = Node<RegionNodeData, "networkRegion">;
-type VolumeNodeData = { name: string; path: string; layoutDirection: LayoutDirection };
-type VolumeFlowNode = Node<VolumeNodeData, "volumeNode">;
-type ExternalNodeData = { name: string; kind: string; layoutDirection: LayoutDirection };
-type ExternalFlowNode = Node<ExternalNodeData, "externalNode">;
+type ServiceFlowNode = Node<ServiceNodeModel, "serviceNode">;
+type ProjectFlowNode = Node<{ isRoot: true; name: string; subtitle: string }, "projectNode">;
+type VolumeFlowNode = Node<{ name: string; path: string; consumerCount?: number }, "volumeNode">;
+type ExternalFlowNode = Node<{ name: string; kind: string }, "externalNode">;
 
 function statusClass(data: ServiceNodeModel): string {
   if (data.healthStatus === "healthy") {
@@ -27,16 +22,50 @@ function statusClass(data: ServiceNodeModel): string {
   return data.status;
 }
 
-// Compose images are often unresolved env interpolations, e.g.
-// `${MINIO_IMAGE:-minio/minio@sha256:<64 hex chars>}`. Rendering that whole
-// expression verbatim is what overflows the node - instead surface the
-// meaningful part: the default image (if one is declared) or just the
-// variable name. The raw string is still shown in full via the `title`
-// tooltip, and CSS still clips+ellipsizes as a final safety net for any
-// value that's simply long on its own (e.g. a bare unresolved digest).
 function formatImageDisplay(image: string): string {
   return image.replace(/\$\{([^}:]+)(:-([^}]*))?\}/g, (_match, varName: string, _hasDefault, defaultValue?: string) =>
     defaultValue ? defaultValue : varName
+  );
+}
+
+function portTargetUrl(port: PortMapping): string | undefined {
+  if (port.state !== "published" || !port.hostPort) {
+    return undefined;
+  }
+
+  const rawHost = port.hostIp?.trim();
+  const host =
+    !rawHost || rawHost === "0.0.0.0" || rawHost === "::" || rawHost === ":::" || rawHost === "[::]"
+      ? "localhost"
+      : rawHost;
+
+  return `http://${host}:${port.hostPort}`;
+}
+
+async function openPort(port: PortMapping): Promise<void> {
+  const target = portTargetUrl(port);
+  if (!target) {
+    return;
+  }
+
+  try {
+    await window.dockerExplorer.openExternalUrl(target);
+  } catch (error) {
+    console.error("Failed to open published port", { port, error });
+  }
+}
+
+export function ProjectNode({ data }: NodeProps<ProjectFlowNode>) {
+  return (
+    <div className="project-hub-node">
+      <span className="project-hub-node__eyebrow">Compose project</span>
+      <strong className="project-hub-node__name" title={data.name}>
+        {data.name}
+      </strong>
+      <span className="mono-micro project-hub-node__subtitle" title={data.subtitle}>
+        {data.subtitle}
+      </span>
+    </div>
   );
 }
 
@@ -45,8 +74,6 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
     data.categories.networks.length > 1
       ? `${data.categories.networks[0]} +${data.categories.networks.length - 1}`
       : data.categories.networks[0] ?? "runtime networks unavailable";
-  const targetHandlePosition = data.layoutDirection === "RIGHT" ? Position.Left : Position.Top;
-  const sourceHandlePosition = data.layoutDirection === "RIGHT" ? Position.Right : Position.Bottom;
 
   const rawImage =
     data.image ?? (data.sourceHints?.dockerfilePath ? `build: ${data.sourceHints.dockerfilePath}` : "image unresolved");
@@ -54,8 +81,17 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
 
   return (
     <div className="manifest-node">
-      <Handle type="target" position={targetHandlePosition} className="graph-handle graph-handle--target" />
-      <Handle type="source" position={sourceHandlePosition} className="graph-handle graph-handle--source" />
+      <Handle id="dependency-in" type="target" position={Position.Top} className="graph-handle graph-handle--hidden" />
+      <Handle id="dependency-out" type="source" position={Position.Bottom} className="graph-handle graph-handle--hidden" />
+      <Handle id="storage" type="target" position={Position.Right} className="graph-handle graph-handle--hidden" />
+      <div className="manifest-node__eyebrow-row">
+        <span className="manifest-node__eyebrow">Service</span>
+        {data.details?.containerId ? (
+          <span className="manifest-node__meta mono-micro" title={data.details.containerId}>
+            {data.details.containerId.slice(0, 12)}
+          </span>
+        ) : null}
+      </div>
       <div className="manifest-node__header">
         <div className="manifest-node__title">
           <span className={`status-dot status-dot--${statusClass(data)} ${data.status === "running" ? "pulse" : ""}`} />
@@ -73,9 +109,19 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
       <div className="node-tags">
         {data.portMappings.length > 0 ? (
           data.portMappings.slice(0, 2).map((port) => (
-            <span key={port.id} className={`manifest-tag manifest-tag--${port.state}`} title={port.label}>
+            <button
+              key={port.id}
+              type="button"
+              className={`manifest-tag manifest-tag--${port.state} ${port.state === "published" && port.hostPort ? "manifest-tag--interactive" : ""}`}
+              title={port.state === "published" && port.hostPort ? `${port.label} - open in browser` : port.label}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void openPort(port);
+              }}
+            >
               {port.label}
-            </span>
+            </button>
           ))
         ) : (
           <span className="manifest-tag">no published ports</span>
@@ -94,44 +140,30 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
   );
 }
 
-export function NetworkRegionNode({ data }: NodeProps<RegionFlowNode>) {
-  return (
-    <div className="network-region-node">
-      <span className="network-region-node__label" title={data.label}>
-        {data.label}
-      </span>
-    </div>
-  );
-}
-
 export function VolumeNode({ data }: NodeProps<VolumeFlowNode>) {
-  const sourceHandlePosition = data.layoutDirection === "RIGHT" ? Position.Right : Position.Bottom;
-
   return (
     <div className="volume-node">
-      <Handle type="source" position={sourceHandlePosition} className="graph-handle graph-handle--volume" />
+      <Handle id="resource-out" type="source" position={Position.Left} className="graph-handle graph-handle--hidden" />
+      <span className="volume-node__eyebrow">Volume</span>
       <strong className="volume-node__name" title={data.name}>
         {data.name}
       </strong>
-      <span className="mono-micro" title={data.path}>
-        {data.path}
+      <span className="volume-node__detail mono-micro" title={data.path}>
+        {data.consumerCount && data.consumerCount > 1 ? `${data.consumerCount} services` : data.path}
       </span>
     </div>
   );
 }
 
 export function ExternalNode({ data }: NodeProps<ExternalFlowNode>) {
-  const targetHandlePosition = data.layoutDirection === "RIGHT" ? Position.Left : Position.Top;
-
   return (
     <div className="external-node">
-      <Handle type="target" position={targetHandlePosition} className="graph-handle graph-handle--external" />
+      <Handle id="dependency-out" type="source" position={Position.Bottom} className="graph-handle graph-handle--hidden" />
+      <span className="external-node__eyebrow">External {data.kind}</span>
       <strong className="external-node__name" title={data.name}>
         {data.name}
       </strong>
-      <span className="mono-micro" title={`external ${data.kind}`}>
-        external {data.kind}
-      </span>
+      <span className="external-node__detail mono-micro">Dependency</span>
     </div>
   );
 }

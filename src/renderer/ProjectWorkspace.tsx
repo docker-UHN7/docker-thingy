@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
-  LayoutPanelTop,
   LoaderCircle,
   MoonStar,
   Plus,
@@ -106,9 +105,7 @@ export function ProjectWorkspace({
   const [envFilter, setEnvFilter] = useState("");
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
-  const [layoutDirection, setLayoutDirection] = useState<"RIGHT" | "DOWN">("RIGHT");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [dismissedValidationOperationId, setDismissedValidationOperationId] = useState<string | undefined>();
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   // Toggling a compose-file checkbox round-trips through main (reload +
@@ -156,12 +153,6 @@ export function ProjectWorkspace({
     setOptimisticConfigFiles(undefined);
     setSavingConfigFiles(false);
   }, [project?.id]);
-
-  useEffect(() => {
-    if (operation?.actionId === "validate" && operation.status === "running" && dismissedValidationOperationId) {
-      setDismissedValidationOperationId(undefined);
-    }
-  }, [operation?.actionId, operation?.status, operation?.operationId, operation?.startedAt, dismissedValidationOperationId]);
 
   async function applyConfigFilesChange(newFiles: string[]) {
     if (!project) {
@@ -371,11 +362,6 @@ export function ProjectWorkspace({
   const runtimeIndicatorClass =
     lifecycle.state === "running" ? "running" : lifecycle.state === "crashed" ? "error" : "stopped";
   const uptimeLabel = relativeTimeLabel(selectedService?.details?.runtimeState.startedAt);
-  const validationOperation = operation?.actionId === "validate" ? operation : undefined;
-  const actionOperation = operation && operation.actionId !== "validate" ? operation : undefined;
-  const validationOperationKey = validationOperation?.operationId || validationOperation?.startedAt;
-  const visibleValidationOperation =
-    validationOperation && validationOperationKey !== dismissedValidationOperationId ? validationOperation : undefined;
   const activeConfigFiles = optimisticConfigFiles ?? project.configFiles;
   const inactiveConfigFiles = (project.allConfigFiles ?? []).filter((file) => !activeConfigFiles.includes(file));
   // Computed across every detected file (not just the active subset) so a
@@ -398,7 +384,6 @@ export function ProjectWorkspace({
           project={project}
           filterQuery={deferredQuery}
           selectedNodeId={selectedNodeId}
-          layoutDirection={layoutDirection}
           onSelectNode={(nodeId) => {
             setSelectedNodeId(nodeId);
             setDetailTab("overview");
@@ -567,18 +552,6 @@ export function ProjectWorkspace({
               <div className="workspace-toolbar__divider" />
 
               <div className="workspace-toolbar__cluster">
-                <button
-                  className="button button--secondary"
-                  onClick={() => setLayoutDirection((current) => (current === "RIGHT" ? "DOWN" : "RIGHT"))}
-                >
-                  <LayoutPanelTop size={16} />
-                  <span>{layoutDirection === "RIGHT" ? "Left to right" : "Top to bottom"}</span>
-                </button>
-              </div>
-
-              <div className="workspace-toolbar__divider" />
-
-              <div className="workspace-toolbar__cluster">
                 <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
                   {theme === "dark" ? <SunMedium size={16} /> : <MoonStar size={16} />}
                 </button>
@@ -596,7 +569,7 @@ export function ProjectWorkspace({
           </Panel>
 
           <Panel position="bottom-center" style={{ margin: 16 }}>
-            <OperationProgressPanel operation={actionOperation} projectTitle={project.title} />
+            <OperationProgressPanel operation={operation} projectTitle={project.title} includeValidate />
           </Panel>
 
           <Panel position="center-right" style={{ margin: 16 }}>
@@ -615,28 +588,6 @@ export function ProjectWorkspace({
                   settings={settings}
                   onUpdate={(next) => void updateSettings(next)}
                   onClearRecents={() => void clearRecents()}
-                />
-              </aside>
-            ) : visibleValidationOperation ? (
-              <aside className="floating-panel detail-panel detail-panel--overlay">
-                <div className="detail-panel__header">
-                  <div>
-                    <p className="eyebrow">Detail Panel</p>
-                    <h3 className="panel-title">Validation</h3>
-                  </div>
-                  <button
-                    className="icon-button"
-                    onClick={() => setDismissedValidationOperationId(validationOperationKey)}
-                    aria-label="Close panel"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-                <OperationProgressPanel
-                  operation={visibleValidationOperation}
-                  projectTitle={project.title}
-                  variant="inline"
-                  includeValidate
                 />
               </aside>
             ) : selectedService ? (

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Circle, LoaderCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Circle, LoaderCircle, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { OperationState } from "./store";
 
@@ -127,10 +127,29 @@ export function OperationProgressPanel({
 }: OperationProgressPanelProps) {
   const [dismissedOperationId, setDismissedOperationId] = useState<string | undefined>();
   const [expandedKey, setExpandedKey] = useState<string | undefined>();
+  const [hovered, setHovered] = useState(false);
+  const [pinnedOperationId, setPinnedOperationId] = useState<string | undefined>();
   const operationKey = operation ? operation.operationId || operation.startedAt : undefined;
 
   useEffect(() => {
+    if (!operationKey) {
+      return;
+    }
+
+    setExpandedKey(undefined);
+    setHovered(false);
+    if (pinnedOperationId && pinnedOperationId !== operationKey) {
+      setPinnedOperationId(undefined);
+    }
+  }, [operationKey, pinnedOperationId]);
+
+  useEffect(() => {
     if (!operation) {
+      return;
+    }
+
+    if (operation.status !== "running" && hovered && pinnedOperationId !== operationKey) {
+      setPinnedOperationId(operationKey);
       return;
     }
 
@@ -138,17 +157,20 @@ export function OperationProgressPanel({
       if (dismissedOperationId !== undefined) {
         setDismissedOperationId(undefined);
       }
+      if (pinnedOperationId !== undefined) {
+        setPinnedOperationId(undefined);
+      }
       return;
     }
 
-    if (operation.status === "success") {
+    if (operation.status === "success" && pinnedOperationId !== operationKey && !hovered) {
       const timer = window.setTimeout(() => {
         setDismissedOperationId(operationKey);
       }, 2200);
 
       return () => window.clearTimeout(timer);
     }
-  }, [operation?.status, operation?.operationId, operation?.startedAt, dismissedOperationId, operationKey]);
+  }, [operation?.status, operation?.operationId, operation?.startedAt, dismissedOperationId, hovered, operationKey, pinnedOperationId]);
 
   const steps = useMemo(() => (operation ? parseOperationSteps(operation) : []), [operation]);
   const summary = useMemo(() => (operation ? summarizeOperation(operation) : ""), [operation]);
@@ -165,9 +187,26 @@ export function OperationProgressPanel({
         }`;
 
   return (
-    <div className={containerClass}>
+    <div
+      className={containerClass}
+      onMouseEnter={() => {
+        setHovered(true);
+        if (operation.status !== "running") {
+          setPinnedOperationId(operationKey);
+        }
+      }}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className="operation-progress__header">
         <strong>{operationLabel(operation.actionId, projectTitle)}</strong>
+        <button
+          type="button"
+          className="icon-button operation-progress__close"
+          onClick={() => setDismissedOperationId(operationKey)}
+          aria-label="Dismiss notification"
+        >
+          <X size={14} />
+        </button>
       </div>
       <div className="validate-toast__header">
         {operation.status === "running" ? <LoaderCircle size={14} className="busy spin" /> : null}

@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow, ipcMain, shell } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import type { AppSnapshot, OpenSourceResult, ProjectActionResult } from "../shared/contracts";
 import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
@@ -60,6 +60,18 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
     }
 
     return projectService.openRecentSource(sourcePath);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.OPEN_EXTERNAL_URL, async (event, url: unknown): Promise<void> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    if (typeof url !== "string" || url.trim() === "") {
+      throw new Error("Invalid URL.");
+    }
+
+    await shell.openExternal(url);
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_SERVICE_LOGS, async (event, containerId: string, tail: number) => {

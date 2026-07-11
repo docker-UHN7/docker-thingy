@@ -3,11 +3,14 @@
   --bg-surface: #F3F6F8;
   --bg-elevated: #F7F9FA;
   --bg-elevated-hover: #EEF2F4;
+  --bg-node: #FAFBFC;
+  --bg-node-hover: #F2F5F7;
   --border-subtle: #D5DEE3;
   --border-strong: #BFCCD3;
   --text-primary: #121A1F;
   --text-secondary: #516069;
   --text-tertiary: #8A98A0;
+  --text-node-muted: #61707A;
   --accent-copper: #B8641A;
   --accent-copper-muted: #C9986A;
   --status-running: #1F8F68;
@@ -42,6 +45,7 @@
   --shadow-none: none;
   --shadow-panel: 0 1px 2px rgba(20, 30, 35, 0.05);
   --shadow-modal: 0 8px 24px rgba(20, 30, 35, 0.10);
+  --shadow-node: 0 8px 18px rgba(22, 32, 38, 0.08);
   --log-bg: #0B0F13;
   --log-text: #E9EEF2;
   color-scheme: light;
@@ -52,11 +56,14 @@
   --bg-surface: #10151B;
   --bg-elevated: #141A21;
   --bg-elevated-hover: #171E26;
+  --bg-node: #161D25;
+  --bg-node-hover: #1A222C;
   --border-subtle: #222B35;
-  --border-strong: #2C3844;
+  --border-strong: #364453;
   --text-primary: #F3F4F6;
-  --text-secondary: #A8B1BD;
-  --text-tertiary: #737E8C;
+  --text-secondary: #C2CBD5;
+  --text-tertiary: #97A3AF;
+  --text-node-muted: #B0BBC7;
   --accent-copper: #E2984B;
   --accent-copper-muted: #8A6234;
   --status-running: #46B893;
@@ -67,6 +74,7 @@
   --volume-node: #B892D1;
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.14);
   --shadow-modal: 0 10px 28px rgba(0, 0, 0, 0.24);
+  --shadow-node: 0 12px 28px rgba(0, 0, 0, 0.28);
   --log-bg: #0B0F13;
   --log-text: #E9EEF2;
   color-scheme: dark;
@@ -254,7 +262,6 @@ button {
 
 .eyebrow,
 .manifest-tag,
-.network-region-node__label,
 .stat-label {
   margin: 0;
   color: var(--text-secondary);
@@ -953,7 +960,7 @@ button {
 }
 
 .mono-micro {
-  color: var(--text-tertiary);
+  color: var(--text-node-muted);
   font-size: var(--text-mono-sm);
   line-height: 15px;
   overflow: hidden;
@@ -969,13 +976,22 @@ button {
   min-height: 22px;
   max-width: 100%;
   padding: 0 var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  background: transparent;
+  background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.manifest-tag--interactive {
+  cursor: pointer;
+}
+
+.manifest-tag--interactive:hover {
+  background: var(--bg-node-hover);
+  border-color: var(--border-strong);
 }
 
 .recent-strip {
@@ -1400,6 +1416,15 @@ button {
   gap: var(--space-2);
 }
 
+.operation-progress__header {
+  justify-content: space-between;
+}
+
+.operation-progress__close {
+  width: 24px;
+  height: 24px;
+}
+
 .validate-toast__header {
   font-size: var(--text-body);
   line-height: 20px;
@@ -1434,6 +1459,20 @@ button {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--log-bg);
+}
+
+.edge-label-chip {
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 74%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-node);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  line-height: 15px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-node);
 }
 
 .operation-progress__steps {
@@ -1755,22 +1794,61 @@ button {
   border-color: color-mix(in srgb, var(--status-info) 50%, transparent);
 }
 
+.project-hub-node,
+.volume-node,
+.external-node,
 .manifest-node {
-  /* Fixed (not min-) width/height + overflow:hidden so the rendered box can
-     never grow past what ELK was told about in graph-builder.ts
-     (SERVICE_NODE_WIDTH/SERVICE_NODE_HEIGHT) - every row below is either a
-     single truncated line or explicitly capped, so 156px is always enough. */
-  width: 208px;
-  height: 140px;
+  box-shadow: var(--shadow-node);
+}
+
+.project-hub-node {
+  width: 220px;
+  height: 84px;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--border-subtle);
+  align-content: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-copper) 24%, var(--border-subtle));
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+}
+
+.project-hub-node__eyebrow,
+.manifest-node__eyebrow,
+.volume-node__eyebrow,
+.external-node__eyebrow {
+  color: var(--text-node-muted);
+  font-size: var(--text-label);
+  line-height: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.project-hub-node__name,
+.project-hub-node__subtitle,
+.volume-node__name,
+.external-node__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-hub-node__subtitle {
+  color: var(--text-secondary);
+}
+
+.manifest-node {
+  width: 224px;
+  height: 152px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 72%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--bg-node);
   cursor: pointer;
   transition:
     background 120ms cubic-bezier(0.2, 0, 0, 1),
@@ -1779,11 +1857,30 @@ button {
     transform 120ms cubic-bezier(0.2, 0, 0, 1);
 }
 
+.manifest-node__eyebrow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.manifest-node__meta {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 48%;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+}
+
 .manifest-node__title {
   justify-content: flex-start;
   gap: var(--space-2);
-  font-size: var(--text-h2);
-  line-height: 20px;
+  font-size: 16px;
+  line-height: 21px;
   font-weight: 600;
   min-width: 0;
   flex: 1 1 auto;
@@ -1804,7 +1901,7 @@ button {
 
 .manifest-node__image {
   margin: 0;
-  color: var(--text-secondary);
+  color: var(--text-node-muted);
   font-size: var(--text-mono-sm);
   line-height: 15px;
   overflow: hidden;
@@ -1815,7 +1912,15 @@ button {
 }
 
 .node-state {
-  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 72%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--bg-surface) 84%, transparent);
+  color: var(--text-secondary);
   font-size: var(--text-caption);
   line-height: 16px;
   flex-shrink: 0;
@@ -1831,46 +1936,27 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-node-muted);
 }
 
 .manifest-node__container-count {
   flex-shrink: 0;
   white-space: nowrap;
-}
-
-.network-region-node {
-  width: 100%;
-  height: 100%;
-  padding: var(--space-3);
-  border: 1px dashed color-mix(in srgb, var(--border-strong) 80%, transparent);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-elevated) 18%, transparent);
-  overflow: hidden;
-}
-
-.network-region-node__label {
-  display: block;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
+  color: var(--text-node-muted);
 }
 
 .volume-node,
 .external-node {
-  /* Fixed size + overflow:hidden mirrors .manifest-node above; must stay in
-     sync with COMPACT_NODE_WIDTH/COMPACT_NODE_HEIGHT in graph-builder.ts. */
-  width: 152px;
-  height: 72px;
+  width: 164px;
+  height: 78px;
   overflow: hidden;
   display: grid;
   align-content: start;
-  gap: var(--space-1);
-  padding: var(--space-3);
+  gap: 4px;
+  padding: 11px 12px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-elevated);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 68%, transparent);
+  background: var(--bg-node);
 }
 
 .volume-node__name,
@@ -1879,14 +1965,23 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 18px;
 }
 
 .volume-node {
-  border-color: color-mix(in srgb, var(--volume-node) 45%, var(--border-subtle));
+  border-color: color-mix(in srgb, var(--volume-node) 42%, var(--border-strong));
+}
+
+.volume-node__detail,
+.external-node__detail {
+  color: var(--text-node-muted);
 }
 
 .external-node {
   border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent-copper-muted) 42%, var(--border-strong));
 }
 
 .topology-node {
@@ -2003,6 +2098,15 @@ button {
   background: var(--status-info);
 }
 
+.graph-handle--hidden {
+  width: 8px;
+  height: 8px;
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
 .status-dot--stale::after {
   content: "";
   position: absolute;
@@ -2071,15 +2175,25 @@ button {
 }
 
 .react-flow__node-serviceNode:hover .manifest-node,
-.react-flow__node-serviceNode:focus-visible .manifest-node {
+.react-flow__node-serviceNode:focus-visible .manifest-node,
+.react-flow__node-projectNode:hover .project-hub-node,
+.react-flow__node-volumeNode:hover .volume-node,
+.react-flow__node-externalNode:hover .external-node {
   border-color: var(--border-strong);
-  background: var(--bg-elevated-hover);
+  background: var(--bg-node-hover);
   transform: translateY(-1px);
 }
 
 .react-flow__node.selected .manifest-node {
   border-width: 2px;
   border-color: var(--accent-copper);
+  background: color-mix(in srgb, var(--bg-node) 92%, var(--accent-copper) 8%);
+}
+
+.react-flow__node.selected .volume-node,
+.react-flow__node.selected .external-node {
+  border-color: var(--accent-copper);
+  background: color-mix(in srgb, var(--bg-node) 92%, var(--accent-copper) 8%);
 }
 
 .react-flow__node:focus-visible .manifest-node {

@@ -388,6 +388,7 @@ export type PreloadApi = {
   openSource(): Promise<OpenSourceResult>;
   openSourcePath(sourcePath: string): Promise<OpenSourceResult>;
   openRecentSource(sourcePath: string): Promise<OpenSourceResult>;
+  openExternalUrl(url: string): Promise<void>;
   getServiceLogs(containerId: string, tail: number): Promise<LogSnapshotResult>;
   getServiceStats(containerId: string): Promise<StatsSnapshotResult>;
   updateSettings(settings: Partial<AppSettings>): Promise<AppSnapshot>;

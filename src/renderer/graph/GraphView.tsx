@@ -1,27 +1,41 @@
-import { Background, BackgroundVariant, Controls, ReactFlow, type ReactFlowInstance } from "@xyflow/react";
+import {
+  Controls,
+  ReactFlow,
+  applyNodeChanges,
+  type Edge,
+  type EdgeChange,
+  type Node,
+  type NodeChange,
+  type ReactFlowInstance
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Edge, Node } from "@xyflow/react";
 import type { ProjectSummary } from "../../shared/contracts";
-import { buildGraph, layoutGraph } from "./graph-builder";
-import { ExternalNode, NetworkRegionNode, ServiceNode, VolumeNode } from "./DockerNodes";
+import { buildGraph, layoutGraph, resolveMeasuredLayout, type GraphEdgeData, type GraphNodeData } from "./graph-builder";
+import { ExternalNode, ServiceNode, VolumeNode } from "./DockerNodes";
+import { StraightLabeledEdge } from "./StraightLabeledEdge";
 
 const nodeTypes = {
   serviceNode: ServiceNode,
-  networkRegion: NetworkRegionNode,
   volumeNode: VolumeNode,
   externalNode: ExternalNode
+};
+
+const edgeTypes = {
+  smartStraight: StraightLabeledEdge
 };
 
 type GraphViewProps = {
   project: ProjectSummary;
   filterQuery: string;
   selectedNodeId: string | undefined;
-  layoutDirection: "RIGHT" | "DOWN";
   children?: ReactNode;
   onSelectNode(nodeId: string): void;
   onClearSelection(): void;
 };
+
+type FlowNode = Node<GraphNodeData>;
+type FlowEdge = Edge<GraphEdgeData>;
 
 function relatedNodes(project: ProjectSummary, selectedNodeId: string | undefined): Set<string> | undefined {
   if (!selectedNodeId) {
@@ -34,12 +48,18 @@ function relatedNodes(project: ProjectSummary, selectedNodeId: string | undefine
   }
 
   const output = new Set<string>([selectedNodeId]);
+  for (const volumeName of selected.categories.volumes) {
+    output.add(`volume:${volumeName}`);
+  }
+
   for (const service of project.services) {
     if (service.id === selectedNodeId) {
       continue;
     }
 
-    if (service.dependencies.includes(selected.name) || selected.dependencies.includes(service.name)) {
+    const sharesVolume = service.categories.volumes.some((volumeName) => selected.categories.volumes.includes(volumeName));
+
+    if (service.dependencies.includes(selected.name) || selected.dependencies.includes(service.name) || sharesVolume) {
       output.add(service.id);
     }
   }
@@ -51,80 +71,105 @@ export function GraphView({
   project,
   filterQuery,
   selectedNodeId,
-  layoutDirection,
   children,
   onSelectNode,
   onClearSelection
 }: GraphViewProps) {
-  const [rawNodes, setRawNodes] = useState<Node[]>(() => buildGraph(project).nodes);
-  const [rawEdges, setRawEdges] = useState<Edge[]>(() => buildGraph(project).edges);
-  const flowRef = useRef<ReactFlowInstance | null>(null);
-  const fitFrameRef = useRef<number | null>(null);
+  const initialGraph = useMemo(() => layoutGraph(project), [project]);
+  const [rawNodes, setRawNodes] = useState<FlowNode[]>(() => initialGraph.nodes);
+  const [rawEdges, setRawEdges] = useState<FlowEdge[]>(() => initialGraph.edges);
+  const [layoutRevision, setLayoutRevision] = useState(0);
+  const flowRef = useRef<ReactFlowInstance<FlowNode, FlowEdge> | null>(null);
+  const measureFrameRef = useRef<number | null>(null);
 
-  const scheduleFitView = useCallback(() => {
-    if (!flowRef.current) {
+  const structureKey = useMemo(
+    () =>
+      JSON.stringify({
+        services: project.services.map((service) => ({
+          id: service.id,
+          name: service.name,
+          image: service.image,
+          ports: service.portMappings.map((port) => [port.id, port.label, port.state, port.hostPort, port.hostIp]),
+          dependencies: service.dependencies,
+          networks: service.categories.networks,
+          volumes: service.categories.volumes,
+          sourceHints: service.sourceHints
+        })),
+        externalNodes: project.externalNodes,
+        relationshipEdges: project.relationshipEdges
+      }),
+    [project]
+  );
+
+  useEffect(() => {
+    const nextGraph = buildGraph(project);
+    setRawNodes((current) =>
+      nextGraph.nodes.map((node) => {
+        const existing = current.find((entry) => entry.id === node.id);
+        return existing ? { ...node, position: existing.position } : node;
+      })
+    );
+    setRawEdges(nextGraph.edges);
+  }, [project]);
+
+  useEffect(() => {
+    const graph = layoutGraph(project);
+    setRawNodes(graph.nodes);
+    setRawEdges(graph.edges);
+    setLayoutRevision((current) => current + 1);
+  }, [structureKey]);
+
+  useEffect(() => {
+    if (!flowRef.current || rawNodes.length === 0) {
       return;
     }
 
-    if (fitFrameRef.current !== null) {
-      cancelAnimationFrame(fitFrameRef.current);
+    if (measureFrameRef.current !== null) {
+      cancelAnimationFrame(measureFrameRef.current);
     }
 
-    fitFrameRef.current = requestAnimationFrame(() => {
-      fitFrameRef.current = requestAnimationFrame(() => {
-        void flowRef.current?.fitView({ padding: 0.18, duration: 280 });
+    measureFrameRef.current = requestAnimationFrame(() => {
+      measureFrameRef.current = requestAnimationFrame(() => {
+        const measuredNodes = flowRef.current?.getNodes().map((node) => {
+          const width = node.measured?.width ?? node.width;
+          const height = node.measured?.height ?? node.height;
+          if (!width || !height) {
+            return undefined;
+          }
+
+          return {
+            id: node.id,
+            width,
+            height
+          };
+        }).filter((node): node is { id: string; width: number; height: number } => Boolean(node));
+
+        if (!measuredNodes || measuredNodes.length === 0) {
+          return;
+        }
+
+        setRawNodes((current) => {
+          const next = resolveMeasuredLayout(current, rawEdges, measuredNodes);
+          const changed = next.some((node, index) => {
+            const currentNode = current[index];
+            return !currentNode || currentNode.id !== node.id || currentNode.position.x !== node.position.x || currentNode.position.y !== node.position.y;
+          });
+
+          return changed ? next : current;
+        });
       });
     });
-  }, []);
-
-  // Layout is (re)computed asynchronously by elkjs, which resolves well after this
-  // effect returns. We only ever write the *structural* nodes/edges here (position,
-  // type, data) - selection/filter highlighting is layered on top via the memos
-  // below so that a layout recompute (e.g. triggered by a runtime poll while a
-  // node is selected) can never clobber the current selection/dim state.
-  useEffect(() => {
-    let cancelled = false;
-
-    void layoutGraph(project, layoutDirection)
-      .then((graph) => {
-        if (cancelled) {
-          return;
-        }
-        setRawNodes(graph.nodes);
-        setRawEdges(graph.edges);
-        scheduleFitView();
-      })
-      .catch((err) => {
-        if (cancelled) {
-          return;
-        }
-        console.error("Graph layout failed", err);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [project, layoutDirection, scheduleFitView]);
+  }, [layoutRevision, rawEdges, rawNodes.length]);
   const related = useMemo(() => relatedNodes(project, selectedNodeId), [project, selectedNodeId]);
 
-  const nodes = useMemo<Node[]>(() => {
+  const nodes = useMemo<FlowNode[]>(() => {
     const term = filterQuery.trim().toLowerCase();
 
     return rawNodes.map((node) => {
-      if (node.type === "networkRegion") {
-        return {
-          ...node,
-          style: {
-            ...node.style,
-            opacity: selectedNodeId ? 0.3 : 1
-          }
-        };
-      }
-
-      const data = node.data as { name?: string; image?: string; ports?: string[] };
+      const data = node.data as { name?: string; image?: string; ports?: string[]; subtitle?: string };
       const matches =
         term === "" ||
-        [data.name, data.image, ...(data.ports ?? [])]
+        [data.name, data.image, data.subtitle, ...(data.ports ?? [])]
           .filter(Boolean)
           .join(" ")
           .toLowerCase()
@@ -142,7 +187,7 @@ export function GraphView({
     });
   }, [rawNodes, filterQuery, selectedNodeId, related]);
 
-  const edges = useMemo<Edge[]>(
+  const edges = useMemo<FlowEdge[]>(
     () =>
       rawEdges.map((edge) => ({
         ...edge,
@@ -157,12 +202,20 @@ export function GraphView({
 
   useEffect(
     () => () => {
-      if (fitFrameRef.current !== null) {
-        cancelAnimationFrame(fitFrameRef.current);
+      if (measureFrameRef.current !== null) {
+        cancelAnimationFrame(measureFrameRef.current);
       }
     },
     []
   );
+
+  const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
+    setRawNodes((current) => applyNodeChanges(changes, current));
+  }, []);
+
+  const onEdgesChange = useCallback((_changes: EdgeChange<FlowEdge>[]) => {
+    // Graph edges are structural, not user-editable.
+  }, []);
 
   return (
     <div className="graph-shell">
@@ -170,11 +223,15 @@ export function GraphView({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        defaultEdgeOptions={{ type: "smartStraight" }}
         fitView={false}
         minZoom={0.2}
         maxZoom={1.6}
         proOptions={{ hideAttribution: true }}
-        nodesDraggable={false}
+        nodesDraggable
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
         onPaneClick={() => onClearSelection()}
         onNodeClick={(_event, node) => {
           if (node.type === "serviceNode") {
@@ -183,12 +240,10 @@ export function GraphView({
         }}
         onInit={(instance) => {
           flowRef.current = instance;
-          scheduleFitView();
         }}
       >
         {children}
         <Controls showInteractive={false} showFitView fitViewOptions={{ padding: 0.18, duration: 220 }} />
-        <Background variant={BackgroundVariant.Dots} color="var(--border-subtle)" gap={20} size={1} />
       </ReactFlow>
     </div>
   );

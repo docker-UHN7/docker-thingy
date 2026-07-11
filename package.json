@@ -30,6 +30,7 @@
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@xyflow/react": "latest",
+    "d3-force": "^3.0.0",
     "electron-squirrel-startup": "latest",
     "elkjs": "latest",
     "fast-xml-parser": "^5.10.0",
