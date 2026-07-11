@@ -31,6 +31,22 @@ export function App() {
     void bootstrap();
   }, [bootstrap]);
 
+  // Periodic background refresh so running containers' status stays live
+  // without the user having to hit the manual refresh button. This is the
+  // "periodic runtime refresh" that used to be able to bounce the active
+  // project to an unrelated one on every tick - fixed at the source
+  // (ProjectService.refreshRuntime/mergeProjectLists), not by removing the
+  // poll.
+  useEffect(() => {
+    const seconds = settings?.runtimeRefreshSeconds;
+    if (!seconds) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => void refreshRuntime(), seconds * 1000);
+    return () => window.clearInterval(intervalId);
+  }, [settings?.runtimeRefreshSeconds, refreshRuntime]);
+
   return (
     <div className="app-shell" data-theme={theme}>
       {screen === "launcher" ? (

@@ -123,7 +123,8 @@ export type Result<T> =
           | "PROCESS_FAILED"
           | "TIMEOUT"
           | "SOURCE_CHANGED_EXTERNALLY"
-          | "VALIDATION_FAILED";
+          | "VALIDATION_FAILED"
+          | "OPERATION_IN_PROGRESS";
         message: string;
         details?: string | undefined;
       };
@@ -296,12 +297,14 @@ export type SourceSession = {
   diffPreview: string;
 };
 
-export type AppSettings = {
-  themeMode: ThemeMode;
-  runtimeRefreshSeconds: number | null;
-  statsPollSeconds: number | null;
-  logTailLines: number;
-};
+export const AppSettingsSchema = z.object({
+  themeMode: z.enum(["light", "dark", "system"]),
+  runtimeRefreshSeconds: z.number().int().positive().nullable(),
+  statsPollSeconds: z.number().int().positive().nullable(),
+  logTailLines: z.number().int().positive().max(10_000)
+});
+
+export type AppSettings = z.infer<typeof AppSettingsSchema>;
 
 export type AppSnapshot = {
   dockerStatus: DockerStatus;
@@ -320,6 +323,17 @@ export type LogSnapshotResult = Result<{
   fetchedAt: string;
 }>;
 
+export type ContainerStats = {
+  containerId: string;
+  cpuPercent?: number | undefined;
+  memoryUsageBytes?: number | undefined;
+  memoryLimitBytes?: number | undefined;
+  memoryPercent?: number | undefined;
+  fetchedAt: string;
+};
+
+export type StatsSnapshotResult = Result<ContainerStats>;
+
 export type ValidationOutcome = {
   ok: boolean;
   title: string;
@@ -332,6 +346,36 @@ export type BuildTarget = {
   description?: string | undefined;
 };
 
+export type OperationStream = "stdout" | "stderr";
+
+export type ExecutableProjectActionId = "validate" | "apply-start" | "stop" | "build-image";
+
+export type OperationEvent =
+  | {
+      kind: "status";
+      projectId: string;
+      operationId: string;
+      actionId: ExecutableProjectActionId;
+      status: "running" | "success" | "failed";
+      startedAt: string;
+      finishedAt?: string | undefined;
+      errorMessage?: string | undefined;
+    }
+  | {
+      kind: "output";
+      projectId: string;
+      operationId: string;
+      actionId: ExecutableProjectActionId;
+      stream: OperationStream;
+      line: string;
+    };
+
+export type ProjectActionResult = Result<{
+  operationId: string;
+  outcome: ValidationOutcome;
+  snapshot: AppSnapshot;
+}>;
+
 export type PreloadApi = {
   getSnapshot(): Promise<AppSnapshot>;
   refreshRuntime(): Promise<RefreshRuntimeResult>;
@@ -339,7 +383,9 @@ export type PreloadApi = {
   openSourcePath(sourcePath: string): Promise<OpenSourceResult>;
   openRecentSource(sourcePath: string): Promise<OpenSourceResult>;
   getServiceLogs(containerId: string, tail: number): Promise<LogSnapshotResult>;
+  getServiceStats(containerId: string): Promise<StatsSnapshotResult>;
   updateSettings(settings: Partial<AppSettings>): Promise<AppSnapshot>;
   clearRecents(): Promise<AppSnapshot>;
-  subscribeBuildEvents(listener: (event: string) => void): () => void;
+  runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
+  subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
 };

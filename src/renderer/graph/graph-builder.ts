@@ -12,6 +12,48 @@ type GraphEdgeData = {
   kind: "dependency" | "mount" | "network-link";
 };
 
+// These pixel dimensions MUST stay in sync with the rendered node sizes in
+// styles.css (`.manifest-node` and `.volume-node`/`.external-node`). ELK lays
+// out the graph using these numbers *before* anything is rendered to the DOM,
+// so if the CSS box is ever bigger than what we tell ELK, nodes will overlap.
+// Both node families are fixed-height (with `overflow: hidden`) precisely so
+// that "actual rendered size" can never drift from these constants regardless
+// of content length.
+export const SERVICE_NODE_WIDTH = 216;
+export const SERVICE_NODE_HEIGHT = 156;
+export const COMPACT_NODE_WIDTH = 160;
+export const COMPACT_NODE_HEIGHT = 72;
+
+// Rough width estimate for an edge label so ELK can reserve enough space
+// between layers to fit the label chip without it overlapping a node. Edge
+// labels render in an 11px bold monospace font (see `.react-flow__edge-text`
+// in styles.css); ~7px/char covers that comfortably, plus padding for the
+// label chip's own background.
+const EDGE_LABEL_CHAR_WIDTH = 7;
+const EDGE_LABEL_CHIP_PADDING = 16;
+const EDGE_LABEL_HEIGHT = 20;
+const EDGE_LABEL_MIN_WIDTH = 32;
+
+function estimateEdgeLabelWidth(label: string): number {
+  return Math.max(EDGE_LABEL_MIN_WIDTH, label.length * EDGE_LABEL_CHAR_WIDTH + EDGE_LABEL_CHIP_PADDING);
+}
+
+// Shared styling so every edge label renders as an opaque, bordered chip
+// rather than bare text - otherwise it visually merges with whatever node
+// content happens to sit underneath it.
+function edgeLabelChipStyle(color: string) {
+  return {
+    labelBgStyle: {
+      fill: "var(--bg-elevated)",
+      fillOpacity: 1,
+      stroke: color,
+      strokeWidth: 1
+    },
+    labelBgPadding: [6, 4] as [number, number],
+    labelBgBorderRadius: 4
+  };
+}
+
 function findVolumeMount(service: ServiceNodeModel, volumeName: string): MountRecord | undefined {
   return service.details?.mounts.find((mount) => (mount.name ?? mount.source) === volumeName);
 }
@@ -65,8 +107,10 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
           strokeWidth: 2.6
         },
         labelStyle: {
-          fill: "var(--accent-copper)"
+          fill: "var(--accent-copper)",
+          fontWeight: 600
         },
+        ...edgeLabelChipStyle("var(--accent-copper)"),
         data: {
           kind: "dependency"
         },
@@ -100,8 +144,10 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
           strokeDasharray: "6 4"
         },
         labelStyle: {
-          fill: "var(--volume-node)"
+          fill: "var(--volume-node)",
+          fontWeight: 600
         },
+        ...edgeLabelChipStyle("var(--volume-node)"),
         data: {
           kind: "mount"
         },
@@ -134,8 +180,10 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
           strokeDasharray: "3 6"
         },
         labelStyle: {
-          fill: "var(--status-info)"
+          fill: "var(--status-info)",
+          fontWeight: 600
         },
+        ...edgeLabelChipStyle("var(--status-info)"),
         data: {
           kind: "network-link"
         },
@@ -184,19 +232,40 @@ export async function layoutGraph(
       "elk.algorithm": "layered",
       "elk.direction": direction,
       "elk.spacing.nodeNode": "48",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "84",
-      "elk.edgeRouting": "ORTHOGONAL"
+      "elk.layered.spacing.nodeNodeBetweenLayers": "96",
+      "elk.edgeRouting": "ORTHOGONAL",
+      // Reserve room around edges/labels so a label chip never sits flush
+      // against (or on top of) a node's border.
+      "elk.spacing.edgeNode": "28",
+      "elk.spacing.edgeEdge": "16",
+      "elk.spacing.edgeLabel": "12",
+      "elk.layered.spacing.edgeNodeBetweenLayers": "28",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "16"
     },
+    // Widths/heights here must match the actual rendered node sizes (see the
+    // SERVICE_NODE_*/COMPACT_NODE_* constants above and the corresponding
+    // fixed-size, overflow-hidden CSS rules) or ELK will under-allocate space
+    // and neighboring nodes/edges will overlap.
     children: nodes.map((node) => ({
       id: node.id,
-      width: node.type === "serviceNode" ? 260 : 180,
-      height: node.type === "serviceNode" ? 144 : 84
+      width: node.type === "serviceNode" ? SERVICE_NODE_WIDTH : COMPACT_NODE_WIDTH,
+      height: node.type === "serviceNode" ? SERVICE_NODE_HEIGHT : COMPACT_NODE_HEIGHT
     })),
-    edges: edges.map((edge) => ({
-      id: edge.id,
-      sources: [edge.source],
-      targets: [edge.target]
-    }))
+    edges: edges.map((edge) => {
+      const labelText = typeof edge.label === "string" ? edge.label : undefined;
+      return {
+        id: edge.id,
+        sources: [edge.source],
+        targets: [edge.target],
+        // Giving ELK the label's approximate footprint lets the layered
+        // algorithm widen the gap between layers just enough to fit it,
+        // instead of drawing it wherever happens to be free (often on top
+        // of a node).
+        labels: labelText
+          ? [{ id: `${edge.id}::label`, text: labelText, width: estimateEdgeLabelWidth(labelText), height: EDGE_LABEL_HEIGHT }]
+          : []
+      };
+    })
   });
 
   const laidOutNodes = nodes.map((node) => {
@@ -224,8 +293,8 @@ export async function layoutGraph(
 
     const minX = Math.min(...members.map((node) => node.position.x)) - 36;
     const minY = Math.min(...members.map((node) => node.position.y)) - 28;
-    const maxX = Math.max(...members.map((node) => node.position.x + 260));
-    const maxY = Math.max(...members.map((node) => node.position.y + 144));
+    const maxX = Math.max(...members.map((node) => node.position.x + SERVICE_NODE_WIDTH));
+    const maxY = Math.max(...members.map((node) => node.position.y + SERVICE_NODE_HEIGHT));
 
     regions.push({
       id: `network-region:${project.id}:${networkName}`,

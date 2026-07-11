@@ -1,6 +1,6 @@
 import { Background, BackgroundVariant, Controls, ReactFlow, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import type { ProjectSummary } from "../../shared/contracts";
 import { buildGraph, layoutGraph } from "./graph-builder";
@@ -56,9 +56,8 @@ export function GraphView({
   onSelectNode,
   onClearSelection
 }: GraphViewProps) {
-  const fallback = buildGraph(project);
-  const [nodes, setNodes] = useState<Node[]>(fallback.nodes);
-  const [edges, setEdges] = useState<Edge[]>(fallback.edges);
+  const [rawNodes, setRawNodes] = useState<Node[]>(() => buildGraph(project).nodes);
+  const [rawEdges, setRawEdges] = useState<Edge[]>(() => buildGraph(project).edges);
   const flowRef = useRef<ReactFlowInstance | null>(null);
   const fitFrameRef = useRef<number | null>(null);
 
@@ -78,77 +77,94 @@ export function GraphView({
     });
   }, []);
 
+  // Layout is (re)computed asynchronously by elkjs, which resolves well after this
+  // effect returns. We only ever write the *structural* nodes/edges here (position,
+  // type, data) - selection/filter highlighting is layered on top via the memos
+  // below so that a layout recompute (e.g. triggered by a runtime poll while a
+  // node is selected) can never clobber the current selection/dim state.
   useEffect(() => {
+    let cancelled = false;
     const initial = buildGraph(project);
-    setNodes(initial.nodes);
-    setEdges(initial.edges);
+    setRawNodes(initial.nodes);
+    setRawEdges(initial.edges);
     scheduleFitView();
 
     void layoutGraph(project, layoutDirection)
       .then((graph) => {
-        setNodes(graph.nodes);
-        setEdges(graph.edges);
+        if (cancelled) {
+          return;
+        }
+        setRawNodes(graph.nodes);
+        setRawEdges(graph.edges);
         scheduleFitView();
       })
       .catch(() => {
-        setNodes(initial.nodes);
-        setEdges(initial.edges);
+        if (cancelled) {
+          return;
+        }
+        setRawNodes(initial.nodes);
+        setRawEdges(initial.edges);
         scheduleFitView();
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [project, layoutDirection, scheduleFitView]);
 
   useEffect(() => {
     scheduleFitView();
   }, [fitNonce, scheduleFitView]);
 
-  useEffect(() => {
+  const related = useMemo(() => relatedNodes(project, selectedNodeId), [project, selectedNodeId]);
+
+  const nodes = useMemo<Node[]>(() => {
     const term = filterQuery.trim().toLowerCase();
-    const related = relatedNodes(project, selectedNodeId);
 
-    setNodes((current) =>
-      current.map((node) => {
-        if (node.type === "networkRegion") {
-          return {
-            ...node,
-            style: {
-              ...node.style,
-              opacity: selectedNodeId ? 0.3 : 1
-            }
-          };
-        }
-
-        const data = node.data as { name?: string; image?: string; ports?: string[] };
-        const matches =
-          term === "" ||
-          [data.name, data.image, ...(data.ports ?? [])]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase()
-            .includes(term);
-        const connected = !related || related.has(node.id);
-
+    return rawNodes.map((node) => {
+      if (node.type === "networkRegion") {
         return {
           ...node,
-          selected: node.id === selectedNodeId,
           style: {
             ...node.style,
-            opacity: matches ? (connected ? 1 : 0.22) : 0.18
+            opacity: selectedNodeId ? 0.3 : 1
           }
         };
-      })
-    );
+      }
 
-    setEdges((current) =>
-      current.map((edge) => ({
+      const data = node.data as { name?: string; image?: string; ports?: string[] };
+      const matches =
+        term === "" ||
+        [data.name, data.image, ...(data.ports ?? [])]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(term);
+      const connected = !related || related.has(node.id);
+
+      return {
+        ...node,
+        selected: node.id === selectedNodeId,
+        style: {
+          ...node.style,
+          opacity: matches ? (connected ? 1 : 0.22) : 0.18
+        }
+      };
+    });
+  }, [rawNodes, filterQuery, selectedNodeId, related]);
+
+  const edges = useMemo<Edge[]>(
+    () =>
+      rawEdges.map((edge) => ({
         ...edge,
         style: {
           ...(edge.style ?? {}),
           opacity: !related || (related.has(edge.source) && related.has(edge.target)) ? 1 : 0.25,
           strokeWidth: edge.data?.kind === "dependency" ? 2.2 : edge.data?.kind === "mount" ? 1.9 : 1.5
         }
-      }))
-    );
-  }, [filterQuery, project, selectedNodeId]);
+      })),
+    [rawEdges, related]
+  );
 
   useEffect(
     () => () => {

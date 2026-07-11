@@ -1,0 +1,28 @@
+services:
+  web:
+    image: nginx:latest
+    build: ./web
+    ports:
+      - "8080:80"
+    expose:
+      - "9000"
+    depends_on:
+      - api
+    networks:
+      - frontend
+      - backend
+    volumes:
+      - webdata:/usr/share/nginx/html
+  api:
+    image: node:20-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+    volumes:
+      - ./local:/app
+  db:
+    image: postgres:16
+    networks:
+      - backend

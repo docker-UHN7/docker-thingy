@@ -1,16 +1,27 @@
 import {
   ArrowLeft,
   LayoutPanelTop,
+  LoaderCircle,
   MoonStar,
   RefreshCw,
   ScanSearch,
   Settings,
   Shrink,
   SunMedium,
+  TriangleAlert,
   X
 } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import type { AppSettings, DockerStatus, LogSnapshotResult, ProjectAction, ProjectSummary, ServiceNodeModel } from "../shared/contracts";
+import type {
+  AppSettings,
+  DockerStatus,
+  ExecutableProjectActionId,
+  LogSnapshotResult,
+  ProjectAction,
+  ProjectSummary,
+  ServiceNodeModel,
+  StatsSnapshotResult
+} from "../shared/contracts";
 import { useAppStore } from "./store";
 import { GraphView } from "./graph/GraphView";
 import { ConfigurationPanel } from "./ConfigurationPanel";
@@ -32,6 +43,17 @@ type ProjectWorkspaceProps = {
 };
 
 type DetailTab = "overview" | "env" | "mounts" | "logs";
+
+const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
+  "validate",
+  "apply-start",
+  "stop",
+  "build-image"
+]);
+
+function isExecutableActionId(value: string): value is ExecutableProjectActionId {
+  return EXECUTABLE_ACTION_IDS.has(value);
+}
 
 function relativeTimeLabel(value: string | undefined): string {
   if (!value) {
@@ -78,15 +100,31 @@ export function ProjectWorkspace({
   const [fitNonce, setFitNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | undefined>();
+  const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   const deferredQuery = useDeferredValue(query);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const clearRecents = useAppStore((state) => state.clearRecents);
+  const runProjectAction = useAppStore((state) => state.runProjectAction);
+  const operations = useAppStore((state) => state.operations);
+  const operation = project ? operations[project.id] : undefined;
 
+  // Intentionally no fallback to project.services[0]: selectedNodeId === undefined
+  // means "nothing selected" and must stay that way so clearing the selection
+  // (Escape, clicking empty canvas, closing the panel) actually closes the panel
+  // instead of silently re-selecting the first service.
   const selectedService = useMemo(
-    () => project?.services.find((service) => service.id === selectedNodeId) ?? project?.services[0],
+    () => project?.services.find((service) => service.id === selectedNodeId),
     [project, selectedNodeId]
   );
+
+  // If the active project changes out from under us (switched projects, or the
+  // previously selected service disappeared on refresh) drop a now-invalid
+  // selection instead of leaving a stale id around.
+  useEffect(() => {
+    if (selectedNodeId && !project?.services.some((service) => service.id === selectedNodeId)) {
+      setSelectedNodeId(undefined);
+    }
+  }, [project, selectedNodeId]);
 
   const visibleEnv = useMemo(() => {
     const env = selectedService?.details?.env ?? [];
@@ -95,10 +133,6 @@ export function ProjectWorkspace({
   }, [envFilter, selectedService]);
 
   useEffect(() => {
-    if (!selectedService) {
-      return;
-    }
-
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setSelectedNodeId(undefined);
@@ -108,7 +142,7 @@ export function ProjectWorkspace({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedService]);
+  }, []);
 
   useEffect(() => {
     const containerId = selectedService?.details?.containerId;
@@ -119,6 +153,9 @@ export function ProjectWorkspace({
     const containerIdSafe = containerId;
     const tailSafe = tail;
 
+    // Reset immediately so switching services/tabs never briefly shows the
+    // previous service's log lines while the fresh fetch is in flight.
+    setLogsState(null);
     let cancelled = false;
 
     async function loadLogs() {
@@ -140,6 +177,45 @@ export function ProjectWorkspace({
       }
     };
   }, [detailTab, selectedService?.details?.containerId, settings?.logTailLines, settings?.runtimeRefreshSeconds]);
+
+  useEffect(() => {
+    const containerId = selectedService?.details?.containerId;
+    const isRunning = selectedService?.details?.runtimeState.running;
+    if (detailTab !== "overview" || !containerId || !isRunning) {
+      setStatsState(null);
+      return;
+    }
+    const containerIdSafe = containerId;
+
+    // Reset immediately so switching between two running services never briefly
+    // shows the previous service's CPU/memory numbers while the fetch is in flight.
+    setStatsState(null);
+    let cancelled = false;
+
+    async function loadStats() {
+      const result = await window.dockerExplorer.getServiceStats(containerIdSafe);
+      if (!cancelled) {
+        setStatsState(result);
+      }
+    }
+
+    void loadStats();
+
+    const intervalMs = settings?.statsPollSeconds ? settings.statsPollSeconds * 1000 : null;
+    const intervalId = intervalMs ? window.setInterval(() => void loadStats(), intervalMs) : undefined;
+
+    return () => {
+      cancelled = true;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [
+    detailTab,
+    selectedService?.details?.containerId,
+    selectedService?.details?.runtimeState.running,
+    settings?.statsPollSeconds
+  ]);
 
   if (!project) {
     return (
@@ -171,6 +247,14 @@ export function ProjectWorkspace({
                 ? "Try Refresh runtime, start a container, or open an explicit Compose source."
                 : dockerStatus?.message ?? "No Docker runtime data is available yet."}
             </p>
+            <ul className="hero-steps">
+              <li>Start Docker Desktop (or your Docker daemon) so running containers can be discovered automatically.</li>
+              <li>Or go back and open a docker-compose.yml, compose.yaml, or Dockerfile directly.</li>
+            </ul>
+            <button className="button button--primary" onClick={onBack}>
+              <ArrowLeft size={16} />
+              <span>Back to projects</span>
+            </button>
           </div>
         </div>
       </main>
@@ -187,7 +271,11 @@ export function ProjectWorkspace({
       return;
     }
 
-    setActionMessage(`Action "${action.label}" is surfaced, but backend execution is not wired yet.`);
+    if (!project || !isExecutableActionId(action.id)) {
+      return;
+    }
+
+    void runProjectAction(project.id, action.id);
   }
 
   const runtimeStateLabel = dockerStatus?.daemonAvailable ? "connected" : loading ? "reconnecting..." : "offline";
@@ -243,6 +331,13 @@ export function ProjectWorkspace({
         </div>
       </header>
 
+      {error ? (
+        <div className="error-banner error-banner--inline">
+          <TriangleAlert size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
       <div className="workspace-frame">
         <section className="graph-stage">
           <div className="graph-stage__header">
@@ -258,21 +353,19 @@ export function ProjectWorkspace({
               </p>
             </div>
             <div className="toolbar-note-cluster">
-              {actionMessage ? <span className="toolbar-note">{actionMessage}</span> : null}
-              {error ? <span className="toolbar-note toolbar-note--error">{error}</span> : null}
               {!dockerStatus?.daemonAvailable && dockerStatus?.message ? (
                 <span className="toolbar-note">{dockerStatus.message}</span>
               ) : null}
             </div>
           </div>
 
-          <OperationPanel actions={project.actions} onAction={handleAction} />
+          <OperationPanel actions={project.actions} operation={operation} onAction={handleAction} />
           <ValidationPanel diagnostics={project.diagnostics} />
 
           <GraphView
             project={project}
             filterQuery={deferredQuery}
-            selectedNodeId={selectedService?.id}
+            selectedNodeId={selectedNodeId}
             layoutDirection={layoutDirection}
             fitNonce={fitNonce}
             onSelectNode={(nodeId) => {
@@ -327,7 +420,13 @@ export function ProjectWorkspace({
               ))}
             </div>
 
-            {detailTab === "overview" ? <Inspector service={selectedService} uptimeLabel={uptimeLabel} /> : null}
+            {detailTab === "overview" ? (
+              <Inspector
+                service={selectedService}
+                uptimeLabel={uptimeLabel}
+                stats={statsState?.ok ? statsState.data : undefined}
+              />
+            ) : null}
 
             {detailTab === "env" ? (
               <div className="detail-stack">
@@ -347,8 +446,12 @@ export function ProjectWorkspace({
                     visibleEnv.map((entry) => (
                       <div key={entry.key} className="detail-list__row detail-list__row--column">
                         <div className="detail-row-main">
-                          <span className="mono-key">{entry.key}</span>
-                          <span className="mono-value">{entry.masked ? "••••••••" : entry.value}</span>
+                          <span className="mono-key" title={entry.key}>
+                            {entry.key}
+                          </span>
+                          <span className="mono-value" title={entry.masked ? "Value hidden" : entry.value}>
+                            {entry.masked ? "••••••••" : entry.value}
+                          </span>
                         </div>
                         <button className="button button--secondary" onClick={() => void navigator.clipboard.writeText(entry.value)}>
                           Copy
@@ -366,8 +469,12 @@ export function ProjectWorkspace({
                   selectedService.details.mounts.map((mount) => (
                     <div key={`${mount.source}:${mount.destination}`} className="mount-row">
                       <span className={`manifest-tag manifest-tag--${mount.type}`}>{mount.type}</span>
-                      <span className="mono-value">{mount.source}</span>
-                      <span className="mono-value">{mount.destination}</span>
+                      <span className="mono-value" title={mount.source}>
+                        {mount.source}
+                      </span>
+                      <span className="mono-value" title={mount.destination}>
+                        {mount.destination}
+                      </span>
                       <span className="manifest-tag">{mount.rw ? "rw" : "ro"}</span>
                     </div>
                   ))
@@ -384,10 +491,15 @@ export function ProjectWorkspace({
               selectedService.details?.containerId ? (
                 logsState?.ok ? (
                   <LogsPanel lines={logsState.data.lines} fetchedAt={logsState.data.fetchedAt} />
-                ) : (
-                  <div className="detail-list__row">
+                ) : logsState?.ok === false ? (
+                  <div className="detail-list__row detail-list__row--error">
                     <span className="mono-key">Logs</span>
-                    <span className="mono-value">{logsState?.error.message ?? "Loading logs..."}</span>
+                    <span className="mono-value">{logsState.error.message}</span>
+                  </div>
+                ) : (
+                  <div className="detail-list__row detail-list__row--loading">
+                    <LoaderCircle size={14} className="busy spin" />
+                    <span className="mono-value">Loading logs...</span>
                   </div>
                 )
               ) : (
@@ -397,6 +509,16 @@ export function ProjectWorkspace({
                 </div>
               )
             ) : null}
+          </aside>
+        ) : null}
+
+        {!settingsOpen && !selectedService ? (
+          <aside className="detail-panel detail-panel--empty">
+            <p className="eyebrow">Detail Panel</p>
+            <h3 className="panel-title">No service selected</h3>
+            <p className="body-copy body-copy--secondary">
+              Click a service node in the graph to inspect its overview, environment variables, mounts, and logs.
+            </p>
           </aside>
         ) : null}
       </div>

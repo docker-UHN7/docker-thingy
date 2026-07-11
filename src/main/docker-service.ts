@@ -1,9 +1,11 @@
 import * as z from "zod";
 import { access } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 import {
   ComposeListRecordSchema,
   ContainerInspectSchema,
   type ContainerDetails,
+  type ContainerStats,
   type DependencyDescriptor,
   type DockerHealth,
   type DockerStatus,
@@ -37,6 +39,60 @@ const ComposePsRecordSchema = z.looseObject({
     )
     .optional()
 });
+
+const DockerStatsRecordSchema = z.looseObject({
+  Container: z.string().optional(),
+  ID: z.string().optional(),
+  Name: z.string().optional(),
+  CPUPerc: z.string().optional(),
+  MemPerc: z.string().optional(),
+  MemUsage: z.string().optional()
+});
+
+const MEMORY_UNIT_MULTIPLIERS: Record<string, number> = {
+  B: 1,
+  KiB: 1024,
+  MiB: 1024 ** 2,
+  GiB: 1024 ** 3,
+  TiB: 1024 ** 4,
+  KB: 1000,
+  MB: 1000 ** 2,
+  GB: 1000 ** 3,
+  TB: 1000 ** 4
+};
+
+function parsePercent(value: string | undefined): number | undefined {
+  const match = value?.match(/^([\d.]+)%$/);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseMemoryToken(token: string | undefined): number | undefined {
+  const match = token?.trim().match(/^([\d.]+)\s*([A-Za-z]+)$/);
+  if (!match?.[1] || !match[2]) {
+    return undefined;
+  }
+
+  const multiplier = MEMORY_UNIT_MULTIPLIERS[match[2]];
+  if (!multiplier) {
+    return undefined;
+  }
+
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed * multiplier : undefined;
+}
+
+function parseMemUsage(value: string | undefined): { usageBytes: number | undefined; limitBytes: number | undefined } {
+  const [usageToken, limitToken] = (value ?? "").split("/").map((entry) => entry.trim());
+  return {
+    usageBytes: parseMemoryToken(usageToken),
+    limitBytes: parseMemoryToken(limitToken)
+  };
+}
 
 function isSecretKey(key: string): boolean {
   return /(?:^|_)(SECRET|PASSWORD|TOKEN|KEY)$/i.test(key);
@@ -427,10 +483,6 @@ function toRuntimeContainer(inspected: z.infer<typeof ContainerInspectSchema>): 
   };
 }
 
-function composeProjectName(inspected: z.infer<typeof ContainerInspectSchema>): string | undefined {
-  return inspected.Config?.Labels?.["com.docker.compose.project"];
-}
-
 function toContainerDetails(inspected: z.infer<typeof ContainerInspectSchema>): ContainerDetails {
   return {
     containerId: inspected.Id,
@@ -566,6 +618,19 @@ function splitComposeConfigFiles(configFiles: string[] | undefined): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Normalizes a filesystem path into a stable, comparable key: absolute,
+ * forward-slashed, lowercased (Windows/most-mac filesystems are
+ * case-insensitive, and this is only used for dedup matching - never for
+ * an actual filesystem call). Used to recognize when a project the user
+ * explicitly opened from source and a project `docker compose ls` just
+ * discovered at runtime both point at the exact same Compose file, so the
+ * two can be merged into a single card instead of showing two.
+ */
+export function resolveConfigKey(path: string): string {
+  return resolvePath(path).replace(/\\/g, "/").toLowerCase();
+}
+
 async function maybeLoadComposeSource(
   contextName: string,
   configFiles: string[] | undefined
@@ -648,6 +713,47 @@ function mergeRuntimeProjectWithSource(
     diagnostics: [...sourceProject.diagnostics],
     externalNodes: buildExternalNodes(mergedServices),
     relationshipEdges: buildRelationshipEdges(mergedServices),
+    sourceLinked: true
+  };
+}
+
+/**
+ * The counterpart to `mergeRuntimeProjectWithSource`, used when a project was
+ * already opened explicitly from source (and already has a stable
+ * `source-compose:...` id, editable actions, etc.) and a *separate*
+ * runtime-discovered card for the exact same Compose file shows up on
+ * refresh. Keeps the source project's identity (id/access/actions/title) -
+ * which is what `activeProjectId` points at - while pulling in live
+ * container status per service, so the two never render as duplicate cards
+ * and the active selection never has to jump to a different project just
+ * because its runtime twin came and went.
+ */
+export function mergeSourceProjectWithRuntime(
+  contextName: string,
+  sourceProject: ProjectSummary,
+  runtimeProject: ProjectSummary
+): ProjectSummary {
+  const runtimeByService = new Map(runtimeProject.services.map((service) => [service.name, service]));
+  const mergedServices = sourceProject.services.map((service) =>
+    mergeServiceModel(service, runtimeByService.get(service.name), contextName, runtimeProject.title)
+  );
+
+  for (const runtimeOnlyService of runtimeProject.services) {
+    if (mergedServices.some((service) => service.name === runtimeOnlyService.name)) {
+      continue;
+    }
+
+    mergedServices.push(runtimeOnlyService);
+  }
+
+  return {
+    ...sourceProject,
+    subtitle: runtimeProject.subtitle,
+    services: mergedServices,
+    externalNodes: buildExternalNodes(mergedServices),
+    relationshipEdges: buildRelationshipEdges(mergedServices),
+    lastUpdatedLabel: "Just refreshed",
+    lastCheckedAt: new Date().toISOString(),
     sourceLinked: true
   };
 }
@@ -863,22 +969,35 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
     const inspectedMap = await inspectContainers(containerIds);
     const inspectedContainers = [...inspectedMap.values()];
 
-    const composeContainerIds = new Set(
-      inspectedContainers.filter((entry) => composeProjectName(entry)).map((entry) => entry.Id)
-    );
+    // Track containers that actually got attached to one of the resolved
+    // compose projects below (rather than "any container carrying a compose
+    // label"). A container can carry a `com.docker.compose.project` label for
+    // a project that `docker compose ls` no longer reports (e.g. the project
+    // was removed/renamed); excluding those from the standalone list purely
+    // based on the label would silently drop them from the UI entirely.
+    const containersLinkedToComposeProjects = new Set<string>();
 
     const composeProjectsResolved = await Promise.all(
       composeProjects.data.map(async (project) => {
         const matchingContainers = inspectedContainers.filter(
           (container) => container.Config?.Labels?.["com.docker.compose.project"] === project.Name
         );
+        for (const container of matchingContainers) {
+          containersLinkedToComposeProjects.add(container.Id);
+        }
         const services = await discoverComposeProjectServices(contextName, project.Name, matchingContainers);
         const sourceProject = await maybeLoadComposeSource(contextName, project.ConfigFiles ? [project.ConfigFiles] : []);
 
         const resolvedConfigFiles = splitComposeConfigFiles(project.ConfigFiles ? [project.ConfigFiles] : []);
+        // The Compose project name alone (typically just the containing
+        // directory's basename) isn't a reliably unique key - two unrelated
+        // directories can easily share a name. Fold in the resolved config
+        // file path too so those don't collide into a single id and cause
+        // the active project to silently flip to the wrong card on refresh.
+        const configIdentity = resolvedConfigFiles[0] ? resolveConfigKey(resolvedConfigFiles[0]) : "no-config-file";
 
         const runtimeProject = {
-          id: `runtime-compose:${contextName}:${project.Name}`,
+          id: `runtime-compose:${contextName}:${project.Name}:${configIdentity}`,
           title: project.Name,
           subtitle: project.Status ?? "Runtime-discovered Compose project",
           runtimeKind: "compose" as const,
@@ -912,7 +1031,7 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
     );
 
     const standaloneProjects = inspectedContainers
-      .filter((container) => !composeContainerIds.has(container.Id))
+      .filter((container) => !containersLinkedToComposeProjects.has(container.Id))
       .map((container) => standaloneContainerProject(contextName, container));
 
     return [...composeProjectsResolved, ...standaloneProjects];
@@ -933,6 +1052,27 @@ export async function fetchContainerLogs(containerId: string, tail: number): Pro
   return {
     containerId,
     lines: content.split(/\r?\n/).filter((line) => line.length > 0),
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+export async function fetchContainerStats(containerId: string): Promise<ContainerStats> {
+  const result = await execCommand("docker", ["stats", "--no-stream", "--format", "{{json .}}", containerId], {
+    timeoutMs: PROCESS_LIMITS.statsFetchMs,
+    maxBytes: PROCESS_LIMITS.maxDiagnosticBytes,
+    category: "stats"
+  });
+
+  const parsed = parseJsonOrJsonLines(result.stdout, DockerStatsRecordSchema);
+  const record = parsed.ok ? parsed.data[0] : undefined;
+  const { usageBytes, limitBytes } = parseMemUsage(record?.MemUsage);
+
+  return {
+    containerId,
+    cpuPercent: parsePercent(record?.CPUPerc),
+    memoryUsageBytes: usageBytes,
+    memoryLimitBytes: limitBytes,
+    memoryPercent: parsePercent(record?.MemPerc),
     fetchedAt: new Date().toISOString()
   };
 }

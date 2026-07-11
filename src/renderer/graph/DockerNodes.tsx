@@ -25,13 +25,26 @@ function statusClass(data: ServiceNodeModel): string {
   return data.status;
 }
 
+// Compose images are often unresolved env interpolations, e.g.
+// `${MINIO_IMAGE:-minio/minio@sha256:<64 hex chars>}`. Rendering that whole
+// expression verbatim is what overflows the node - instead surface the
+// meaningful part: the default image (if one is declared) or just the
+// variable name. The raw string is still shown in full via the `title`
+// tooltip, and CSS still clips+ellipsizes as a final safety net for any
+// value that's simply long on its own (e.g. a bare unresolved digest).
+function formatImageDisplay(image: string): string {
+  return image.replace(/\$\{([^}:]+)(:-([^}]*))?\}/g, (_match, varName: string, _hasDefault, defaultValue?: string) =>
+    defaultValue ? defaultValue : varName
+  );
+}
+
 export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
   const networkSummary =
-    data.categories.networks.length > 0
-      ? data.categories.networks.join(", ")
-      : data.categories.containers.length > 0
-        ? "network data available once running"
-        : "network data available once running";
+    data.categories.networks.length > 0 ? data.categories.networks.join(", ") : "network data available once running";
+
+  const rawImage =
+    data.image ?? (data.sourceHints?.dockerfilePath ? `build: ${data.sourceHints.dockerfilePath}` : "image unresolved");
+  const displayImage = formatImageDisplay(rawImage);
 
   return (
     <div className="manifest-node">
@@ -40,17 +53,21 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
       <div className="manifest-node__header">
         <div className="manifest-node__title">
           <span className={`status-dot status-dot--${statusClass(data)} ${data.status === "running" ? "pulse" : ""}`} />
-          <strong>{data.name}</strong>
+          <strong className="manifest-node__name" title={data.name}>
+            {data.name}
+          </strong>
         </div>
-        <span className="node-state">{data.healthStatus ?? data.status}</span>
+        <span className="node-state" title={data.healthStatus ?? data.status}>
+          {data.healthStatus ?? data.status}
+        </span>
       </div>
-      <p className="manifest-node__image">
-        {data.image ?? (data.sourceHints?.dockerfilePath ? `build: ${data.sourceHints.dockerfilePath}` : "image unresolved")}
+      <p className="manifest-node__image" title={rawImage}>
+        {displayImage}
       </p>
       <div className="node-tags">
         {data.portMappings.length > 0 ? (
           data.portMappings.slice(0, 3).map((port) => (
-            <span key={port.id} className={`manifest-tag manifest-tag--${port.state}`}>
+            <span key={port.id} className={`manifest-tag manifest-tag--${port.state}`} title={port.label}>
               {port.label}
             </span>
           ))
@@ -60,9 +77,11 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
         {data.portMappings.length > 3 ? <span className="manifest-tag">+{data.portMappings.length - 3} more</span> : null}
       </div>
       <div className="manifest-node__footer">
-        <span className="mono-micro">{networkSummary}</span>
+        <span className="mono-micro manifest-node__network" title={networkSummary}>
+          {networkSummary}
+        </span>
         {data.categories.containers.length > 1 ? (
-          <span className="mono-micro">{data.categories.containers.length} containers</span>
+          <span className="mono-micro manifest-node__container-count">{data.categories.containers.length} containers</span>
         ) : null}
       </div>
     </div>
@@ -72,7 +91,9 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
 export function NetworkRegionNode({ data }: NodeProps<RegionFlowNode>) {
   return (
     <div className="network-region-node">
-      <span className="network-region-node__label">{data.label}</span>
+      <span className="network-region-node__label" title={data.label}>
+        {data.label}
+      </span>
     </div>
   );
 }
@@ -81,8 +102,12 @@ export function VolumeNode({ data }: NodeProps<VolumeFlowNode>) {
   return (
     <div className="volume-node">
       <Handle type="source" position={Position.Right} className="graph-handle graph-handle--volume" />
-      <strong>{data.name}</strong>
-      <span className="mono-micro">{data.path}</span>
+      <strong className="volume-node__name" title={data.name}>
+        {data.name}
+      </strong>
+      <span className="mono-micro" title={data.path}>
+        {data.path}
+      </span>
     </div>
   );
 }
@@ -91,8 +116,12 @@ export function ExternalNode({ data }: NodeProps<ExternalFlowNode>) {
   return (
     <div className="external-node">
       <Handle type="target" position={Position.Left} className="graph-handle graph-handle--external" />
-      <strong>{data.name}</strong>
-      <span className="mono-micro">external {data.kind}</span>
+      <strong className="external-node__name" title={data.name}>
+        {data.name}
+      </strong>
+      <span className="mono-micro" title={`external ${data.kind}`}>
+        external {data.kind}
+      </span>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
-import type { AppSnapshot, OpenSourceResult, RefreshRuntimeResult } from "../shared/contracts";
+import type { AppSnapshot, OpenSourceResult, ProjectActionResult, RefreshRuntimeResult } from "../shared/contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { ProjectService } from "./project-service";
 
@@ -69,6 +69,14 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
     return projectService.getServiceLogs(containerId, tail);
   });
 
+  ipcMain.handle(IPC_CHANNELS.GET_SERVICE_STATS, async (event, containerId: string) => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.getServiceStats(containerId);
+  });
+
   ipcMain.handle(IPC_CHANNELS.UPDATE_SETTINGS, async (event, settings) => {
     if (!isTrustedSender(mainWindow, event)) {
       throw new Error("Untrusted sender");
@@ -84,6 +92,31 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
 
     return projectService.clearRecents();
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.RUN_PROJECT_ACTION,
+    async (event, projectId: unknown, actionId: unknown): Promise<ProjectActionResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      // The renderer sends only a project id + action name here - main
+      // resolves cwd/config paths/commands entirely from its own snapshot,
+      // never from anything the renderer supplies directly.
+      if (typeof projectId !== "string" || typeof actionId !== "string") {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: "Invalid project action request." }
+        };
+      }
+
+      return projectService.runProjectAction(projectId, actionId, (operationEvent) => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.BUILD_EVENT, operationEvent);
+        }
+      });
+    }
+  );
 }
 
 

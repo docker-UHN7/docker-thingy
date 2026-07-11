@@ -1,6 +1,8 @@
-import { FolderPlus, LoaderCircle, MoonStar, RefreshCw, Search, Settings, SunMedium, X } from "lucide-react";
+import { FolderPlus, LoaderCircle, MoonStar, RefreshCw, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState, type DragEvent } from "react";
 import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contracts";
+import { useAppStore } from "./store";
+import { ConfigurationPanel } from "./ConfigurationPanel";
 
 type SidebarProps = {
   projects: ProjectSummary[];
@@ -65,6 +67,9 @@ export function Sidebar({
   const [query, setQuery] = useState("");
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+  const clearRecents = useAppStore((state) => state.clearRecents);
   const deferredQuery = useDeferredValue(query);
   const filteredProjects = useMemo(() => {
     const term = deferredQuery.trim().toLowerCase();
@@ -115,11 +120,18 @@ export function Sidebar({
           <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
             {theme === "dark" ? <SunMedium size={16} /> : <MoonStar size={16} />}
           </button>
-          <button className="icon-button" aria-label="Settings">
+          <button className="icon-button" aria-label="Settings" onClick={() => setSettingsOpen((value) => !value)}>
             <Settings size={16} />
           </button>
         </div>
       </header>
+
+      {error ? (
+        <div className="error-banner">
+          <TriangleAlert size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
 
       {showDaemonBanner ? (
         <div className="daemon-banner">
@@ -165,7 +177,6 @@ export function Sidebar({
             ) : (
               <span className="toolbar-note">Manual refresh only</span>
             )}
-            {error ? <span className="toolbar-note toolbar-note--error">{error}</span> : null}
           </div>
         </div>
 
@@ -178,13 +189,30 @@ export function Sidebar({
           onDragLeave={() => setDropActive(false)}
           onDrop={handleDrop}
         >
-          {filteredProjects.length === 0 ? (
+          {loading && projects.length === 0 ? (
             <div className="empty-dropzone">
-              <p>Drop a docker-compose.yml, compose.yaml, or Dockerfile here.</p>
+              <LoaderCircle size={28} className="busy spin" />
+              <p>Looking for Docker Compose projects and running containers...</p>
+            </div>
+          ) : filteredProjects.length === 0 && projects.length === 0 ? (
+            <div className="empty-dropzone">
+              <FolderPlus size={28} className="empty-dropzone__icon" />
+              <div>
+                <p className="body-copy">Drop a docker-compose.yml, compose.yaml, or Dockerfile here</p>
+                <p className="metadata-note">
+                  Or click "Add Project" to browse for one. Running containers appear automatically once Docker is
+                  detected.
+                </p>
+              </div>
               <button className="button button--primary" onClick={onOpenSource}>
                 <FolderPlus size={16} />
                 <span>Add Project</span>
               </button>
+            </div>
+          ) : filteredProjects.length === 0 ? (
+            <div className="empty-dropzone">
+              <p className="body-copy">No projects match "{query}".</p>
+              <p className="metadata-note">Try a different search term, or clear the search to see all projects.</p>
             </div>
           ) : (
             <div className="project-grid">
@@ -264,6 +292,27 @@ export function Sidebar({
           )}
         </section>
       </section>
+
+      {settingsOpen && settings ? (
+        <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
+          <aside className="settings-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="detail-panel__header">
+              <div>
+                <p className="eyebrow">Settings</p>
+                <h3 className="panel-title">Workspace preferences</h3>
+              </div>
+              <button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">
+                <X size={16} />
+              </button>
+            </div>
+            <ConfigurationPanel
+              settings={settings}
+              onUpdate={(next) => void updateSettings(next)}
+              onClearRecents={() => void clearRecents()}
+            />
+          </aside>
+        </div>
+      ) : null}
     </main>
   );
 }

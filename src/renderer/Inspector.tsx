@@ -1,13 +1,17 @@
-import type { ServiceNodeModel } from "../shared/contracts";
+import type { ContainerStats, ServiceNodeModel } from "../shared/contracts";
 
 type InspectorProps = {
   service: ServiceNodeModel;
   uptimeLabel: string;
+  stats?: ContainerStats | undefined;
 };
 
-function formatMemory(bytes: number | undefined): string {
-  if (!bytes || bytes <= 0) {
-    return "no limit set";
+// Pure byte formatter, with no opinion on what "0" or "undefined" means -
+// callers decide whether that's "no limit set" (a resource cap) or a real
+// zero-byte reading (current usage).
+export function formatBytes(bytes: number | undefined): string | undefined {
+  if (bytes === undefined || bytes < 0 || Number.isNaN(bytes)) {
+    return undefined;
   }
 
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -21,6 +25,14 @@ function formatMemory(bytes: number | undefined): string {
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+function formatMemory(bytes: number | undefined): string {
+  if (!bytes || bytes <= 0) {
+    return "no limit set";
+  }
+
+  return formatBytes(bytes) ?? "no limit set";
+}
+
 function formatCpu(nanoCpus: number | undefined): string {
   if (!nanoCpus || nanoCpus <= 0) {
     return "no limit set";
@@ -29,7 +41,20 @@ function formatCpu(nanoCpus: number | undefined): string {
   return `${(nanoCpus / 1_000_000_000).toFixed(2)} CPU`;
 }
 
-export function Inspector({ service, uptimeLabel }: InspectorProps) {
+function formatCpuUsage(value: number | undefined): string {
+  return value === undefined ? "not available" : `${value.toFixed(1)}%`;
+}
+
+export function formatMemoryUsage(stats: ContainerStats | undefined): string {
+  if (!stats || stats.memoryUsageBytes === undefined) {
+    return "not available";
+  }
+
+  const percent = stats.memoryPercent !== undefined ? ` (${stats.memoryPercent.toFixed(1)}%)` : "";
+  return `${formatBytes(stats.memoryUsageBytes) ?? "0 B"}${percent}`;
+}
+
+export function Inspector({ service, uptimeLabel, stats }: InspectorProps) {
   const runtime = service.details?.runtimeState;
   const resources = service.details?.resources;
   const restartPolicy = resources?.restartPolicyName || "none";
@@ -45,7 +70,10 @@ export function Inspector({ service, uptimeLabel }: InspectorProps) {
           <span className={`status-dot status-dot--${service.status === "unhealthy" ? "error" : service.status}`} />
           <span className="panel-title">{service.name}</span>
         </div>
-        <p className="mono-value">
+        <p
+          className="mono-value"
+          title={service.image ?? service.sourceHints?.dockerfilePath ?? "image unresolved"}
+        >
           {service.image ?? (service.sourceHints?.dockerfilePath ? `build: ${service.sourceHints.dockerfilePath}` : "image unresolved")}
         </p>
         <p className="body-copy body-copy--secondary">
@@ -58,7 +86,9 @@ export function Inspector({ service, uptimeLabel }: InspectorProps) {
       <div className="stats-grid">
         <div className="stat-block">
           <p className="stat-label">Ports</p>
-          <p className="mono-value">{service.portMappings.map((entry) => entry.label).join(", ") || "none"}</p>
+          <p className="mono-value" title={service.portMappings.map((entry) => entry.label).join(", ") || "none"}>
+            {service.portMappings.map((entry) => entry.label).join(", ") || "none"}
+          </p>
         </div>
         <div className="stat-block">
           <p className="stat-label">Restart policy</p>
@@ -71,6 +101,14 @@ export function Inspector({ service, uptimeLabel }: InspectorProps) {
         <div className="stat-block">
           <p className="stat-label">CPU limit</p>
           <p className="mono-value">{formatCpu(resources?.nanoCpus)}</p>
+        </div>
+        <div className="stat-block">
+          <p className="stat-label">CPU usage</p>
+          <p className="mono-value">{formatCpuUsage(stats?.cpuPercent)}</p>
+        </div>
+        <div className="stat-block">
+          <p className="stat-label">Memory usage</p>
+          <p className="mono-value">{formatMemoryUsage(stats)}</p>
         </div>
         <div className="stat-block">
           <p className="stat-label">Uptime</p>

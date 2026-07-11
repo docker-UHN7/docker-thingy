@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { isMap, isScalar, parseDocument } from "yaml";
+import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { Document } from "yaml";
 import type {
   DependencyDescriptor,
@@ -184,13 +184,24 @@ function toExposeMapping(value: unknown): PortMapping[] {
   ];
 }
 
-function parseDependencies(value: unknown): DependencyDescriptor[] {
+// yaml's Collection#get() only unwraps plain Scalars; YAMLSeq/YAMLMap values are
+// always returned as their Node form (regardless of the keepScalar flag). Every
+// list-shaped Compose field (ports, expose, depends_on, networks, volumes) is
+// parsed from such a node, so a bare `Array.isArray(value)` check silently
+// treats every list-form declaration as absent. Normalize through here first.
+function toPlainArray(value: unknown): unknown[] {
   if (Array.isArray(value)) {
-    return value.map((entry) => ({
-      serviceName: String(entry)
-    }));
+    return value;
   }
 
+  if (isSeq(value)) {
+    return value.toJSON() as unknown[];
+  }
+
+  return [];
+}
+
+function parseDependencies(value: unknown): DependencyDescriptor[] {
   if (isMap(value)) {
     return value.items.map((entry) => {
       const condition = isMap(entry.value) ? entry.value.get("condition") : undefined;
@@ -201,27 +212,21 @@ function parseDependencies(value: unknown): DependencyDescriptor[] {
     });
   }
 
-  return [];
+  return toPlainArray(value).map((entry) => ({
+    serviceName: String(entry)
+  }));
 }
 
 function parseStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map((entry) => String(entry));
-  }
-
   if (isMap(value)) {
     return value.items.map((entry) => String(entry.key));
   }
 
-  return [];
+  return toPlainArray(value).map((entry) => String(entry));
 }
 
 function parseVolumes(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.flatMap((entry) => {
+  return toPlainArray(value).flatMap((entry) => {
     if (typeof entry === "string") {
       const parts = entry.split(":");
       return parts[0] ? [parts[0]] : [];
@@ -350,7 +355,11 @@ function toServiceModels(document: Document): ServiceNodeModel[] {
     const expose = item.value.get("expose");
     const networks = item.value.get("networks", true);
     const volumes = item.value.get("volumes", true);
-    const build = item.value.get("build", true);
+    // Do NOT request keepScalar for build: a Collection (map-form build) is
+    // returned as its Node either way, but requesting keepScalar also leaves a
+    // scalar (string-form `build: ./context`) wrapped, so `typeof build ===
+    // "string"` below would never match and the build context would be lost.
+    const build = item.value.get("build");
     const buildContext =
       typeof build === "string"
         ? build
@@ -362,8 +371,8 @@ function toServiceModels(document: Document): ServiceNodeModel[] {
 
     const dependencyDetails = parseDependencies(dependsOn);
     const portMappings = [
-      ...(Array.isArray(ports) ? ports.flatMap((entry) => toPortMapping(entry, "compose")) : []),
-      ...(Array.isArray(expose) ? expose.flatMap((entry) => toExposeMapping(entry)) : [])
+      ...toPlainArray(ports).flatMap((entry) => toPortMapping(entry, "compose")),
+      ...toPlainArray(expose).flatMap((entry) => toExposeMapping(entry))
     ];
 
     return [
@@ -385,11 +394,9 @@ function toServiceModels(document: Document): ServiceNodeModel[] {
         sourceHints: {
           buildContext,
           dockerfilePath,
-          expose: Array.isArray(expose)
-            ? expose
-                .map((entry) => parsePortToken(String(entry))?.containerPort)
-                .filter((entry): entry is number => Number.isFinite(entry))
-            : []
+          expose: toPlainArray(expose)
+            .map((entry) => parsePortToken(String(entry))?.containerPort)
+            .filter((entry): entry is number => Number.isFinite(entry))
         }
       }
     ];
