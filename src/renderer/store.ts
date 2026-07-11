@@ -5,13 +5,16 @@ import type {
   AppSettings,
   AppSnapshot,
   ExecutableProjectActionId,
+  GetServiceFieldsResult,
   OperationEvent,
   ProjectSummary,
   ReadSourceFileResult,
   RemoveServiceResult,
   SaveSourceFileResult,
   SearchDockerHubResult,
-  ThemeMode
+  ServiceFieldsInput,
+  ThemeMode,
+  UpdateServiceFieldsResult
 } from "../shared/contracts";
 
 function deriveTheme(mode: ThemeMode): "dark" | "light" {
@@ -98,6 +101,12 @@ type AppState = {
   searchDockerHub(query: string): Promise<SearchDockerHubResult>;
   addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
   removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult>;
+  getServiceFields(projectId: string, serviceName: string): Promise<GetServiceFieldsResult>;
+  updateServiceFields(
+    projectId: string,
+    serviceName: string,
+    fields: ServiceFieldsInput
+  ): Promise<UpdateServiceFieldsResult>;
   activeProject(): ProjectSummary | undefined;
   runProjectAction(projectId: string, actionId: ExecutableProjectActionId): Promise<void>;
   handleOperationEvent(event: OperationEvent): void;
@@ -474,6 +483,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   async removeServiceFromProject(projectId, serviceName) {
     const result = await window.dockerExplorer.removeServiceFromProject(projectId, serviceName);
+    if (result.ok) {
+      get().applySnapshot(result.data.snapshot);
+    }
+    return result;
+  },
+  async getServiceFields(projectId, serviceName) {
+    return window.dockerExplorer.getServiceFields(projectId, serviceName);
+  },
+  async updateServiceFields(projectId, serviceName, fields) {
+    const result = await window.dockerExplorer.updateServiceFields(projectId, serviceName, fields);
     if (result.ok) {
       get().applySnapshot(result.data.snapshot);
     }

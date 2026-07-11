@@ -11,6 +11,8 @@ import type {
   ProjectDiagnostics,
   ProjectSummary,
   RelationshipEdge,
+  ServiceFields,
+  ServiceFieldsInput,
   ServiceNodeModel
 } from "../shared/contracts";
 
@@ -842,4 +844,128 @@ export function removeServiceFromCompose(
     sourceText: String(document),
     diffPreview: `- services.${serviceName}`
   };
+}
+
+function scalarText(value: unknown): string {
+  if (isScalar(value)) {
+    return value.value === null || value.value === undefined ? "" : String(value.value);
+  }
+  return value === null || value === undefined ? "" : String(value);
+}
+
+// Reads a service's raw, editable fields straight out of the compose YAML -
+// deliberately not sourced from ServiceNodeModel, which is a merged,
+// display-formatted projection (ports become "host -> container/tcp"
+// labels, volumes lose their mount path) unsuitable for round-tripping back
+// into a form. Only simple string ports/volumes are surfaced; long-form
+// (mapping) port/volume entries are left out of the editable list since
+// there's no lossless flat-string representation for them - they're still
+// visible/editable via the raw YAML editor.
+export function readServiceFields(sourceText: string, serviceName: string): ServiceFields | undefined {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  const servicesNode = document.get("services", true);
+  const serviceNode = isMap(servicesNode) ? servicesNode.get(serviceName, true) : undefined;
+
+  if (!isMap(serviceNode)) {
+    return undefined;
+  }
+
+  const ports = toPlainArray(serviceNode.get("ports", true)).filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+  const volumes = toPlainArray(serviceNode.get("volumes", true)).filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+
+  const dependsOnNode = serviceNode.get("depends_on", true);
+  const dependsOn = isMap(dependsOnNode)
+    ? dependsOnNode.items.map((item) => String(item.key))
+    : toPlainArray(dependsOnNode).map((entry) => String(entry));
+
+  const environment: Record<string, string> = {};
+  const envNode = serviceNode.get("environment", true);
+  if (isMap(envNode)) {
+    for (const item of envNode.items) {
+      environment[String(item.key)] = scalarText(item.value);
+    }
+  } else {
+    for (const entry of toPlainArray(envNode)) {
+      const text = String(entry);
+      const separatorIndex = text.indexOf("=");
+      if (separatorIndex === -1) {
+        environment[text] = "";
+      } else {
+        environment[text.slice(0, separatorIndex)] = text.slice(separatorIndex + 1);
+      }
+    }
+  }
+
+  return {
+    image: scalarText(serviceNode.get("image", true)),
+    restart: scalarText(serviceNode.get("restart", true)),
+    ports,
+    volumes,
+    dependsOn,
+    environment
+  };
+}
+
+// Applies a set of graphical field edits from the side panel to a service.
+// Every field present in `fields` is fully replaced (not merged) - this is
+// a form editor, not the smarter list/map-preserving merges addServiceToCompose
+// uses for "connect to" wiring. A field is deleted from the YAML entirely
+// once its edited value is empty, rather than being written as `[]`/`{}`.
+export function applyServiceFieldEdits(
+  sourceText: string,
+  serviceName: string,
+  fields: ServiceFieldsInput
+): { sourceText: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  const servicePath = ["services", serviceName];
+
+  if (fields.image !== undefined) {
+    setScalarPreservingNode(document, [...servicePath, "image"], fields.image);
+  }
+
+  if (fields.restart !== undefined) {
+    if (fields.restart.trim() === "") {
+      document.deleteIn([...servicePath, "restart"]);
+    } else {
+      setScalarPreservingNode(document, [...servicePath, "restart"], fields.restart);
+    }
+  }
+
+  if (fields.ports !== undefined) {
+    if (fields.ports.length === 0) {
+      document.deleteIn([...servicePath, "ports"]);
+    } else {
+      document.setIn([...servicePath, "ports"], fields.ports);
+    }
+  }
+
+  if (fields.volumes !== undefined) {
+    if (fields.volumes.length === 0) {
+      document.deleteIn([...servicePath, "volumes"]);
+    } else {
+      document.setIn([...servicePath, "volumes"], fields.volumes);
+    }
+  }
+
+  if (fields.dependsOn !== undefined) {
+    if (fields.dependsOn.length === 0) {
+      document.deleteIn([...servicePath, "depends_on"]);
+    } else {
+      document.setIn([...servicePath, "depends_on"], fields.dependsOn);
+    }
+  }
+
+  if (fields.environment !== undefined) {
+    if (Object.keys(fields.environment).length === 0) {
+      document.deleteIn([...servicePath, "environment"]);
+    } else {
+      document.setIn([...servicePath, "environment"], fields.environment);
+    }
+  }
+
+  return { sourceText: String(document) };
 }

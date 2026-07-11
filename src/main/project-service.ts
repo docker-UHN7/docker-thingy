@@ -11,6 +11,7 @@ import type {
   AppSettings,
   AppSnapshot,
   ExecutableProjectActionId,
+  GetServiceFieldsResult,
   LogSnapshotResult,
   OpenSourceResult,
   OperationEvent,
@@ -19,8 +20,11 @@ import type {
   ProjectSummary,
   ReadSourceFileResult,
   RemoveServiceResult,
+  Result,
   SaveSourceFileResult,
+  ServiceFieldsInput,
   StatsSnapshotResult,
+  UpdateServiceFieldsResult,
   ValidationOutcome
 } from "../shared/contracts";
 import {
@@ -31,11 +35,24 @@ import {
   mergeSourceProjectWithRuntime,
   resolveConfigKey
 } from "./docker-service";
-import { addServiceToCompose, hashSource, loadComposeProject, removeServiceFromCompose } from "./compose-service";
+import {
+  addServiceToCompose,
+  applyServiceFieldEdits,
+  hashSource,
+  loadComposeProject,
+  readServiceFields,
+  removeServiceFromCompose
+} from "./compose-service";
 import { loadDockerfileProject, validateImageTag } from "./dockerfile-service";
 import { executeProjectAction } from "./operation-runner";
 import { isTimeoutError } from "./process-runner";
-import { isValidContainerRef, isValidServiceName, normalizeLogTail, sanitizeSettingsPatch } from "./validation";
+import {
+  isValidContainerRef,
+  isValidRestartPolicy,
+  isValidServiceName,
+  normalizeLogTail,
+  sanitizeSettingsPatch
+} from "./validation";
 import { saveSourceAtomically } from "./atomic-save";
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
@@ -1144,6 +1161,160 @@ export class ProjectService {
       this.emitSnapshot();
 
       return { ok: true, data: { snapshot: this.snapshot, serviceName } };
+    });
+  }
+
+  private resolveServiceEditContext(
+    projectId: string,
+    serviceName: string
+  ): { project: ProjectSummary; mainPath: string } | { error: Extract<Result<unknown>, { ok: false }> } {
+    const project = this.snapshot.projects.find((entry) => entry.id === projectId);
+    if (!project || project.runtimeKind !== "compose" || project.access !== "editable") {
+      return {
+        error: {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: "Project not found or is not an editable Compose project." }
+        }
+      };
+    }
+
+    if (!project.services.some((service) => service.name === serviceName)) {
+      return {
+        error: {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: `Service "${serviceName}" was not found in this project.` }
+        }
+      };
+    }
+
+    const mainPath = project.sourcePath ?? project.configFiles[0];
+    if (!mainPath) {
+      return {
+        error: { ok: false, error: { code: "VALIDATION_FAILED", message: "Project has no known source path." } }
+      };
+    }
+
+    return { project, mainPath };
+  }
+
+  /**
+   * Reads a service's graphical fields (image, restart, ports, volumes,
+   * depends_on, environment) straight from the project's base compose file,
+   * for the side-panel "Edit" tab. A service only declared in an override
+   * file (not the base file) isn't readable here - the same base-file-only
+   * scope addServiceToProject/removeServiceFromProject already have.
+   */
+  async getServiceFields(projectId: string, serviceName: string): Promise<GetServiceFieldsResult> {
+    const context = this.resolveServiceEditContext(projectId, serviceName);
+    if ("error" in context) {
+      return context.error;
+    }
+
+    try {
+      const sourceText = await readFile(context.mainPath, "utf8");
+      const fields = readServiceFields(sourceText, serviceName);
+      if (!fields) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: `Service "${serviceName}" isn't declared in ${context.mainPath} - it may only be defined in an override file, which this editor doesn't support yet.`
+          }
+        };
+      }
+
+      return { ok: true, data: { fields } };
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: "PROCESS_FAILED", message: error instanceof Error ? error.message : "Unable to read service fields." }
+      };
+    }
+  }
+
+  /**
+   * Writes graphical field edits from the side panel back to the compose
+   * file. Every field present in `fields` is fully replaced (add/remove-row
+   * form semantics), then the project reloads so the graph reflects the
+   * change immediately - the same hash-checked atomic save + reload
+   * pipeline as every other compose mutation in this class.
+   */
+  async updateServiceFields(
+    projectId: string,
+    serviceName: string,
+    fields: ServiceFieldsInput
+  ): Promise<UpdateServiceFieldsResult> {
+    return this.withLock(async () => {
+      const context = this.resolveServiceEditContext(projectId, serviceName);
+      if ("error" in context) {
+        return context.error;
+      }
+      const { project, mainPath } = context;
+
+      if (fields.image !== undefined) {
+        const imageCheck = validateImageTag(fields.image);
+        if (!imageCheck.ok) {
+          return { ok: false, error: { code: "VALIDATION_FAILED", message: imageCheck.detail } };
+        }
+      }
+
+      if (fields.restart !== undefined && fields.restart.trim() !== "" && !isValidRestartPolicy(fields.restart)) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: 'Invalid restart policy - use "no", "always", "unless-stopped", or "on-failure[:max-retries]".'
+          }
+        };
+      }
+
+      const knownServiceNames = new Set(project.services.map((service) => service.name));
+      for (const dependency of fields.dependsOn ?? []) {
+        if (dependency === serviceName) {
+          return {
+            ok: false,
+            error: { code: "VALIDATION_FAILED", message: "A service cannot depend on itself." }
+          };
+        }
+        if (!knownServiceNames.has(dependency)) {
+          return {
+            ok: false,
+            error: { code: "VALIDATION_FAILED", message: `Service "${dependency}" was not found in this project.` }
+          };
+        }
+      }
+
+      const currentText = await readFile(mainPath, "utf8");
+      const { sourceText: nextText } = applyServiceFieldEdits(currentText, serviceName, fields);
+
+      const saveResult = await saveSourceAtomically(mainPath, nextText, hashSource(currentText));
+      if (!saveResult.ok) {
+        return saveResult;
+      }
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+      if (project.allConfigFiles) {
+        reloaded.allConfigFiles = project.allConfigFiles;
+      }
+      if (project.groupId) {
+        reloaded.groupId = project.groupId;
+        reloaded.groupLabel = project.groupLabel;
+      }
+
+      const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+      const sourceProjects = this.snapshot.projects.filter(
+        (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+      );
+      const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+      this.snapshot = {
+        ...this.snapshot,
+        projects: mergedProjects
+      };
+      this.emitSnapshot();
+
+      return { ok: true, data: { snapshot: this.snapshot } };
     });
   }
 

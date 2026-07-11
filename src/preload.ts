@@ -27,6 +27,9 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
   addServiceToProject: (projectId, input) => ipcRenderer.invoke(IPC_CHANNELS.ADD_SERVICE_TO_PROJECT, projectId, input),
   removeServiceFromProject: (projectId, serviceName) =>
     ipcRenderer.invoke(IPC_CHANNELS.REMOVE_SERVICE_FROM_PROJECT, projectId, serviceName),
+  getServiceFields: (projectId, serviceName) => ipcRenderer.invoke(IPC_CHANNELS.GET_SERVICE_FIELDS, projectId, serviceName),
+  updateServiceFields: (projectId, serviceName, fields) =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SERVICE_FIELDS, projectId, serviceName, fields),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {

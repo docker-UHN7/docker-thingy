@@ -4,12 +4,15 @@ import type {
   AddServiceInput,
   AddServiceResult,
   AppSnapshot,
+  GetServiceFieldsResult,
   OpenSourceResult,
   ProjectActionResult,
   ReadSourceFileResult,
   RemoveServiceResult,
   SaveSourceFileResult,
-  SearchDockerHubResult
+  SearchDockerHubResult,
+  ServiceFieldsInput,
+  UpdateServiceFieldsResult
 } from "../shared/contracts";
 import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
 import { NetworkActionRequestSchema } from "../shared/network-contracts";
@@ -189,6 +192,36 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       }
 
       return projectService.removeServiceFromProject(projectId, serviceName);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.GET_SERVICE_FIELDS,
+    async (event, projectId: unknown, serviceName: unknown): Promise<GetServiceFieldsResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof serviceName !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid get-service-fields request." } };
+      }
+
+      return projectService.getServiceFields(projectId, serviceName);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.UPDATE_SERVICE_FIELDS,
+    async (event, projectId: unknown, serviceName: unknown, fields: unknown): Promise<UpdateServiceFieldsResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof serviceName !== "string" || typeof fields !== "object" || fields === null) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid update-service-fields request." } };
+      }
+
+      return projectService.updateServiceFields(projectId, serviceName, fields as ServiceFieldsInput);
     }
   );
 

@@ -17,6 +17,8 @@ export const IPC_CHANNELS = {
   SEARCH_DOCKER_HUB: "app:search-docker-hub",
   ADD_SERVICE_TO_PROJECT: "app:add-service-to-project",
   REMOVE_SERVICE_FROM_PROJECT: "app:remove-service-from-project",
+  GET_SERVICE_FIELDS: "app:get-service-fields",
+  UPDATE_SERVICE_FIELDS: "app:update-service-fields",
   SNAPSHOT_EVENT: "snapshot:event",
   NETWORK_GET_TOPOLOGY: "network:get-topology",
   NETWORK_RUN_ACTION: "network:run-action",

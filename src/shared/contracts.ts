@@ -415,6 +415,25 @@ export type SearchDockerHubResult = Result<{ results: DockerHubSearchResult[] }>
 
 export type RemoveServiceResult = Result<{ snapshot: AppSnapshot; serviceName: string }>;
 
+// The graphical fields the side-panel "Edit" tab exposes for a Compose
+// service. Read/written straight from the service's block in the compose
+// file - not the same as ServiceNodeModel, which is a merged, display-ready
+// projection built from every active file and (for ports/volumes) already
+// lossy in ways that make it unsuitable for editing.
+export type ServiceFields = {
+  image: string;
+  restart: string;
+  ports: string[];
+  volumes: string[];
+  dependsOn: string[];
+  environment: Record<string, string>;
+};
+
+export type ServiceFieldsInput = Partial<ServiceFields>;
+
+export type GetServiceFieldsResult = Result<{ fields: ServiceFields }>;
+export type UpdateServiceFieldsResult = Result<{ snapshot: AppSnapshot }>;
+
 export type PreloadApi = {
   // Routed through here rather than the web Clipboard API directly - the
   // Electron BrowserWindow denies every permission request/check (see
@@ -443,6 +462,12 @@ export type PreloadApi = {
   searchDockerHub(query: string): Promise<SearchDockerHubResult>;
   addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
   removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult>;
+  getServiceFields(projectId: string, serviceName: string): Promise<GetServiceFieldsResult>;
+  updateServiceFields(
+    projectId: string,
+    serviceName: string,
+    fields: ServiceFieldsInput
+  ): Promise<UpdateServiceFieldsResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;

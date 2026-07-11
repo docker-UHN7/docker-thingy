@@ -37,6 +37,7 @@ import { OperationProgressPanel } from "./OperationProgressPanel";
 import { ProjectActionToolbar } from "./ProjectActionToolbar";
 import { GraphView } from "./graph/GraphView";
 import { deriveProjectLifecycle } from "./project-state";
+import { ServiceFieldsPanel } from "./ServiceFieldsPanel";
 import { SourceEditorPanel } from "./SourceEditorPanel";
 import { useAppStore } from "./store";
 import appLogo from "./assets/logo.png";
@@ -54,7 +55,7 @@ type ProjectWorkspaceProps = {
   onSelectProject(projectId: string): void;
 };
 
-type DetailTab = "overview" | "env" | "mounts" | "logs";
+type DetailTab = "overview" | "edit" | "env" | "mounts" | "logs";
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
@@ -714,7 +715,15 @@ export function ProjectWorkspace({
                 ) : null}
 
                 <div className="detail-tabs">
-                  {(["overview", "env", "mounts", "logs"] as DetailTab[]).map((tab) => (
+                  {(
+                    [
+                      "overview",
+                      ...(canAddService ? (["edit"] as const) : []),
+                      "env",
+                      "mounts",
+                      "logs"
+                    ] as DetailTab[]
+                  ).map((tab) => (
                     <button
                       key={tab}
                       className={`detail-tab ${detailTab === tab ? "detail-tab--active" : ""}`}
@@ -727,6 +736,10 @@ export function ProjectWorkspace({
 
                 {detailTab === "overview" ? (
                   <Inspector service={selectedService} uptimeLabel={uptimeLabel} stats={statsState?.ok ? statsState.data : undefined} />
+                ) : null}
+
+                {detailTab === "edit" && canAddService ? (
+                  <ServiceFieldsPanel project={project} serviceName={selectedService.name} />
                 ) : null}
 
                 {detailTab === "env" ? (
