@@ -1,9 +1,22 @@
-import { FolderPlus, LoaderCircle, MoonStar, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
+import {
+  ArrowRight,
+  Boxes,
+  FileCode2,
+  FolderPlus,
+  LoaderCircle,
+  MoonStar,
+  Search,
+  Settings,
+  SunMedium,
+  TriangleAlert,
+  X
+} from "lucide-react";
 import { useDeferredValue, useMemo, useState, type DragEvent } from "react";
 import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contracts";
 import { useAppStore } from "./store";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 import { deriveProjectLifecycle } from "./project-state";
+import appLogo from "./assets/logo.png";
 
 type SidebarProps = {
   projects: ProjectSummary[];
@@ -32,6 +45,18 @@ function middleTruncate(value: string, head = 20, tail = 16): string {
 
 function isAcceptedSource(path: string): boolean {
   return /(?:docker-compose|compose)\.(?:ya?ml)$|(?:^|[\\/])Dockerfile$/i.test(path);
+}
+
+function pathPrimaryLabel(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length === 0) {
+    return path;
+  }
+
+  const file = parts.at(-1) ?? path;
+  const parent = parts.at(-2);
+  return parent ? `${parent}/${file}` : file;
 }
 
 type FileWithPath = File & { path?: string };
@@ -100,8 +125,8 @@ export function Sidebar({
     <main className="launcher-screen">
       <header className="topbar topbar--launcher">
         <div className="brand-lockup">
-          <div className="brand-mark">DG</div>
-          <h1 className="brand-title">Docker Graph</h1>
+          <img className="brand-mark brand-mark--image" src={appLogo} alt="" />
+          <h1 className="brand-title">VIMOKU</h1>
         </div>
 
         <div className="topbar__controls">
@@ -138,26 +163,26 @@ export function Sidebar({
       <section className="launcher-content">
         <div className="launcher-header">
           <div>
-            <p className="eyebrow">Project Selector</p>
             <h2 className="screen-title">Projects</h2>
+            <p className="body-copy body-copy--secondary">Manage and inspect your Docker Compose projects.</p>
           </div>
-          {showHeaderPrimary ? (
-            <button className="button button--primary" onClick={onOpenSource}>
-              <FolderPlus size={16} />
-              <span>Add Project</span>
-            </button>
-          ) : null}
         </div>
 
-        <div className="launcher-tools">
+        <div className="launcher-toolbar">
           <label className="search-input" aria-label="Search projects">
             <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects..." />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects" />
+            {query ? (
+              <button className="mini-icon-button launcher-search-clear" onClick={() => setQuery("")} aria-label="Clear search">
+                <X size={14} />
+              </button>
+            ) : null}
           </label>
 
-          <div className="launcher-meta">
-            <span className="toolbar-note">{loading ? "Syncing Docker runtime..." : "Watching Docker runtime"}</span>
-          </div>
+          <button className="button button--primary" onClick={onOpenSource}>
+            <FolderPlus size={16} />
+            <span>Add project</span>
+          </button>
         </div>
 
         <div
@@ -195,22 +220,38 @@ export function Sidebar({
               <p className="metadata-note">Try a different search term, or clear the search to see all projects.</p>
             </div>
           ) : (
-            <div className="project-grid">
+            <section className="project-list">
+              <div className="project-list__header" aria-hidden="true">
+                <span>Project</span>
+                <span>Services</span>
+                <span>Source</span>
+                <span>Status</span>
+                <span>Updated</span>
+                <span>Open</span>
+              </div>
               {filteredProjects.map((project) => {
                 const location = project.sourcePath ?? project.configFiles[0] ?? "Runtime-only";
                 const stale = !dockerStatus?.daemonAvailable;
                 const lifecycle = deriveProjectLifecycle(project);
                 const statusClass =
                   lifecycle.state === "running" ? "running" : lifecycle.state === "crashed" ? "error" : "stopped";
+                const statusLabel =
+                  lifecycle.state === "running"
+                    ? "Running"
+                    : lifecycle.state === "crashed"
+                      ? "Crashed"
+                      : lifecycle.hasRuntimeMatch
+                        ? "Stopped"
+                        : "Source only";
                 return (
                   <button
                     key={project.id}
-                    className={`project-card ${project.id === activeProjectId ? "project-card--active" : ""}`}
+                    className={`project-row ${project.id === activeProjectId ? "project-row--active" : ""}`}
                     onClick={() => onSelect(project.id)}
                     title={stale ? staleHint : location}
                   >
-                    <div className="project-card__head">
-                      <div className="project-card__title">
+                    <div className="project-row__project">
+                      <div className="project-row__title">
                         <span
                           className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? statusClass : "stopped"} ${
                             dockerStatus?.daemonAvailable ? "" : "status-dot--stale"
@@ -220,37 +261,33 @@ export function Sidebar({
                         />
                         <span>{project.title}</span>
                       </div>
-                      <span className="mini-icon-button" aria-hidden="true">
-                        <FolderPlus size={14} />
-                      </span>
+                      <p className="mono-path" title={location}>
+                        {middleTruncate(location, 34, 24)}
+                      </p>
+                      <div className="project-row__meta">
+                        <span><Boxes size={14} /> {project.services.length} services</span>
+                        <span><FileCode2 size={14} /> {project.runtimeKind === "compose" ? "Docker Compose" : project.runtimeKind}</span>
+                        <span>{project.contextName}</span>
+                      </div>
                     </div>
 
-                    <p className="mono-path" title={location}>
-                      {middleTruncate(location, 24, 18)}
-                    </p>
-
-                    <div className="metadata-row">
-                      <span className="manifest-tag">{project.services.length} services</span>
-                      <span className="manifest-tag">{project.runtimeKind}</span>
-                      <span className="manifest-tag" title={stale ? staleHint : "Docker was reachable when this project was last checked."}>
-                        {stale ? "stale" : lifecycle.hasRuntimeMatch ? "runtime linked" : "source only"}
-                      </span>
-                    </div>
-
-                    <div className="project-card__foot">
-                      <span className="metadata-note">{project.contextName}</span>
-                      <span className="metadata-note">{project.lastUpdatedLabel}</span>
-                    </div>
+                    <span className="project-row__services">{project.services.length}</span>
+                    <span className="project-row__source" title={location}>{middleTruncate(location, 18, 16)}</span>
+                    <span className={`project-row__status project-row__status--${statusClass}`}>{statusLabel}</span>
+                    <span className="project-row__updated">{project.lastUpdatedLabel}</span>
+                    <span className="project-row__open" aria-hidden="true"><ArrowRight size={16} /></span>
                   </button>
                 );
               })}
-            </div>
+            </section>
           )}
         </div>
 
-        <section className="recent-strip">
+        <section className="recent-strip recent-strip--compact">
           <div className="recent-strip__header">
-            <p className="eyebrow">Recent Sources</p>
+            <div>
+              <p className="panel-title">Recent sources</p>
+            </div>
           </div>
           {recents.length === 0 ? (
             <p className="metadata-note">Opened Compose files and Dockerfiles will appear here.</p>
@@ -261,13 +298,16 @@ export function Sidebar({
                 return (
                   <button
                     key={recent}
-                    className="recent-item recent-item--button mono-path"
+                    className="recent-item recent-item--button"
                     title={recent}
                     onClick={() => onOpenRecent(recent)}
                     disabled={pending}
                   >
                     {pending ? <LoaderCircle size={14} className="busy spin" /> : null}
-                    <span>{middleTruncate(recent, 26, 18)}</span>
+                    <div className="recent-item__copy">
+                      <span className="recent-item__title">{pathPrimaryLabel(recent)}</span>
+                      <span className="mono-path">{middleTruncate(recent, 44, 20)}</span>
+                    </div>
                   </button>
                 );
               })}

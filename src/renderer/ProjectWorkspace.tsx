@@ -28,6 +28,7 @@ import { ProjectActionToolbar } from "./ProjectActionToolbar";
 import { GraphView } from "./graph/GraphView";
 import { deriveProjectLifecycle } from "./project-state";
 import { useAppStore } from "./store";
+import appLogo from "./assets/logo.png";
 
 type ProjectWorkspaceProps = {
   project: ProjectSummary | undefined;
@@ -210,8 +211,8 @@ export function ProjectWorkspace({
       <main className="workspace-screen">
         <header className="topbar topbar--workspace">
           <div className="brand-lockup">
-            <div className="brand-mark">DG</div>
-            <h1 className="brand-title">Docker Graph</h1>
+            <img className="brand-mark brand-mark--image" src={appLogo} alt="" />
+            <h1 className="brand-title">VIMOKU</h1>
           </div>
           <div className="topbar__controls">
             <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
