@@ -96,7 +96,8 @@ export async function executeProjectAction(
   actionId: ExecutableProjectActionId,
   sink: OperationSink
 ): Promise<ValidationOutcome> {
-  const configPath = project.sourcePath ?? project.configFiles[0];
+  const configFiles = project.configFiles.length > 0 ? project.configFiles : (project.sourcePath ? [project.sourcePath] : []);
+  const configPath = configFiles[0];
   const isDockerfile = project.runtimeKind === "dockerfile";
 
   if (!configPath) {
@@ -106,6 +107,8 @@ export async function executeProjectAction(
       detail: "This project has no resolvable Compose file or Dockerfile path to operate on."
     };
   }
+
+  const fileArgs = isDockerfile ? [] : configFiles.flatMap((file) => ["-f", file]);
 
   switch (actionId) {
     case "validate":
@@ -121,7 +124,7 @@ export async function executeProjectAction(
           )
         : runStreamed(
             "docker",
-            ["compose", "-f", configPath, "config"],
+            ["compose", ...fileArgs, "config"],
             PROCESS_LIMITS.composeValidationMs,
             "compose-validation",
             sink,
@@ -142,7 +145,7 @@ export async function executeProjectAction(
       // otherwise this would force an unnecessary rebuild of pure-image
       // services on every start.
       const needsBuild = project.services.some((service) => Boolean(service.sourceHints?.buildContext));
-      const args = ["compose", "-f", configPath, "up", "-d", ...(needsBuild ? ["--build"] : [])];
+      const args = ["compose", ...fileArgs, "up", "-d", ...(needsBuild ? ["--build"] : [])];
 
       return runStreamed(
         "docker",
@@ -168,7 +171,7 @@ export async function executeProjectAction(
       // without tearing down networks/volumes, matching its label/confirmation.
       return runStreamed(
         "docker",
-        ["compose", "-f", configPath, "stop"],
+        ["compose", ...fileArgs, "stop"],
         PROCESS_LIMITS.composeOperationMs,
         "compose-operation",
         sink,
@@ -197,7 +200,7 @@ export async function executeProjectAction(
 
       return runStreamed(
         "docker",
-        ["compose", "-f", configPath, "build"],
+        ["compose", ...fileArgs, "build"],
         PROCESS_LIMITS.imageBuildMs,
         "docker-build",
         sink,

@@ -279,6 +279,9 @@ export type ProjectSummary = {
   contextName: string;
   sourcePath?: string | undefined;
   configFiles: string[];
+  allConfigFiles?: string[];
+  groupId?: string | undefined;
+  groupLabel?: string | undefined;
   services: ServiceNodeModel[];
   diagnostics: ProjectDiagnostics[];
   actions: ProjectAction[];
@@ -312,7 +315,7 @@ export type AppSnapshot = {
   recents: string[];
   settings: AppSettings;
   activeProjectId?: string | undefined;
-  activeSourceSession?: SourceSession | undefined;
+  activeSourceSession?: SourceSession | undefined; 
 };
 
 export type OpenSourceResult = Result<ProjectSummary>;
@@ -386,6 +389,7 @@ export type PreloadApi = {
   getServiceStats(containerId: string): Promise<StatsSnapshotResult>;
   updateSettings(settings: Partial<AppSettings>): Promise<AppSnapshot>;
   clearRecents(): Promise<AppSnapshot>;
+  updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<AppSnapshot>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
 };

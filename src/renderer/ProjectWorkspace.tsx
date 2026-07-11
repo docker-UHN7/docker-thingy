@@ -1,8 +1,14 @@
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
+  ChevronDown,
+  ChevronRight,
+  Layers,
   LayoutPanelTop,
   LoaderCircle,
   MoonStar,
+  Plus,
   RefreshCw,
   ScanSearch,
   Settings,
@@ -32,6 +38,7 @@ import { ValidationPanel } from "./ValidationPanel";
 
 type ProjectWorkspaceProps = {
   project: ProjectSummary | undefined;
+  projects: ProjectSummary[];
   dockerStatus: DockerStatus | undefined;
   settings: AppSettings | undefined;
   theme: "dark" | "light";
@@ -40,6 +47,7 @@ type ProjectWorkspaceProps = {
   onBack(): void;
   onRefresh(): void;
   onToggleTheme(): void;
+  onSelectProject(projectId: string): void;
 };
 
 type DetailTab = "overview" | "env" | "mounts" | "logs";
@@ -83,6 +91,7 @@ function relativeTimeLabel(value: string | undefined): string {
 
 export function ProjectWorkspace({
   project,
+  projects,
   dockerStatus,
   settings,
   theme,
@@ -90,7 +99,8 @@ export function ProjectWorkspace({
   error,
   onBack,
   onRefresh,
-  onToggleTheme
+  onToggleTheme,
+  onSelectProject
 }: ProjectWorkspaceProps) {
   const [query, setQuery] = useState("");
   const [envFilter, setEnvFilter] = useState("");
@@ -101,9 +111,22 @@ export function ProjectWorkspace({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
+  // Toggling a compose-file checkbox round-trips through main (reload +
+  // reparse every active YAML file), which is noticeable enough that driving
+  // `checked` off the store snapshot alone made the control feel unresponsive.
+  // This mirrors the change locally the instant it's clicked and clears once
+  // the persisted snapshot catches up (success or failure - either way
+  // project.configFiles is then the source of truth again).
+  const [optimisticConfigFiles, setOptimisticConfigFiles] = useState<string[] | undefined>(undefined);
+  const [savingConfigFiles, setSavingConfigFiles] = useState(false);
+  // Collapsed by default - this is a power-user control most projects never
+  // need to touch, and an expanded file-order editor sitting open above the
+  // graph on every visit was pure visual noise for the common case.
+  const [composeSelectorOpen, setComposeSelectorOpen] = useState(false);
   const deferredQuery = useDeferredValue(query);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const clearRecents = useAppStore((state) => state.clearRecents);
+  const updateProjectConfigFiles = useAppStore((state) => state.updateProjectConfigFiles);
   const runProjectAction = useAppStore((state) => state.runProjectAction);
   const operations = useAppStore((state) => state.operations);
   const operation = project ? operations[project.id] : undefined;
@@ -117,6 +140,14 @@ export function ProjectWorkspace({
     [project, selectedNodeId]
   );
 
+  // Sibling projects discovered from the same folder scan (see project.groupId)
+  // so the user can tab between e.g. docker-compose-auth.yml and
+  // docker-compose-payment.yml without dropping back out to the launcher.
+  const siblingProjects = useMemo(
+    () => (project?.groupId ? projects.filter((entry) => entry.groupId === project.groupId) : []),
+    [project, projects]
+  );
+
   // If the active project changes out from under us (switched projects, or the
   // previously selected service disappeared on refresh) drop a now-invalid
   // selection instead of leaving a stale id around.
@@ -125,6 +156,66 @@ export function ProjectWorkspace({
       setSelectedNodeId(undefined);
     }
   }, [project, selectedNodeId]);
+
+  // Switching to a different project (including tabbing to a sibling) should
+  // never carry over another project's in-flight compose-file selection.
+  useEffect(() => {
+    setOptimisticConfigFiles(undefined);
+    setSavingConfigFiles(false);
+  }, [project?.id]);
+
+  async function applyConfigFilesChange(newFiles: string[]) {
+    if (!project) {
+      return;
+    }
+
+    setOptimisticConfigFiles(newFiles);
+    setSavingConfigFiles(true);
+    try {
+      await updateProjectConfigFiles(project.id, newFiles);
+    } finally {
+      setOptimisticConfigFiles(undefined);
+      setSavingConfigFiles(false);
+    }
+  }
+
+  function handleConfigFileToggle(file: string, checked: boolean) {
+    if (!project) {
+      return;
+    }
+
+    const baseFiles = optimisticConfigFiles ?? project.configFiles;
+    // Newly-added files go on top of the merge order (last = highest
+    // priority) since that's the position most likely to be what someone
+    // reaching for an override file wants.
+    const newFiles = checked ? [...baseFiles, file] : baseFiles.filter((entry) => entry !== file);
+    void applyConfigFilesChange(newFiles);
+  }
+
+  // Moves a file earlier (-1) or later (+1) in the merge order. Order is the
+  // whole point of this control: compose-service.ts merges configFiles
+  // strictly left-to-right, so a later file's image/ports/etc. win over an
+  // earlier one's - this is what lets the same override file be applied
+  // "on top of" different base files.
+  function handleReorderConfigFile(fromIndex: number, direction: -1 | 1) {
+    if (!project) {
+      return;
+    }
+
+    const baseFiles = optimisticConfigFiles ?? project.configFiles;
+    const toIndex = fromIndex + direction;
+    if (toIndex < 0 || toIndex >= baseFiles.length) {
+      return;
+    }
+
+    const newFiles = [...baseFiles];
+    const [moved] = newFiles.splice(fromIndex, 1);
+    if (moved === undefined) {
+      return;
+    }
+    newFiles.splice(toIndex, 0, moved);
+    void applyConfigFilesChange(newFiles);
+  }
 
   const visibleEnv = useMemo(() => {
     const env = selectedService?.details?.env ?? [];
@@ -283,6 +374,8 @@ export function ProjectWorkspace({
   const dependencyCount = project.services.reduce((count, service) => count + service.dependencyDetails.length, 0);
   const volumeCount = new Set(project.services.flatMap((service) => service.categories.volumes)).size;
   const networkCount = new Set(project.services.flatMap((service) => service.categories.networks)).size;
+  const activeConfigFiles = optimisticConfigFiles ?? project.configFiles;
+  const inactiveConfigFiles = (project.allConfigFiles ?? []).filter((file) => !activeConfigFiles.includes(file));
 
   return (
     <main className="workspace-screen">
@@ -331,6 +424,25 @@ export function ProjectWorkspace({
         </div>
       </header>
 
+      {siblingProjects.length > 1 ? (
+        <div className="project-tabs" role="tablist" aria-label={`Projects in ${project.groupLabel ?? "this folder"}`}>
+          {siblingProjects.map((sibling) => (
+            <button
+              key={sibling.id}
+              role="tab"
+              aria-selected={sibling.id === project.id}
+              className={`project-tab ${sibling.id === project.id ? "project-tab--active" : ""}`}
+              onClick={() => onSelectProject(sibling.id)}
+            >
+              <span
+                className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? (sibling.services.some((s) => s.status === "running") ? "running" : "stopped") : "stopped"}`}
+              />
+              <span>{sibling.title}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="error-banner error-banner--inline">
           <TriangleAlert size={16} />
@@ -343,6 +455,96 @@ export function ProjectWorkspace({
           <div className="graph-stage__header">
             <div>
               <p className="eyebrow">{project.contextName}</p>
+
+              {project.allConfigFiles && project.allConfigFiles.length > 1 && (
+                <div className={`compose-selector ${composeSelectorOpen ? "" : "compose-selector--collapsed"}`}>
+                  <button
+                    type="button"
+                    className="compose-selector__header"
+                    onClick={() => setComposeSelectorOpen((value) => !value)}
+                    aria-expanded={composeSelectorOpen}
+                  >
+                    {composeSelectorOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    <Layers size={14} />
+                    <span className="compose-selector__title">Active compose files</span>
+                    <span className="metadata-note">
+                      {composeSelectorOpen
+                        ? "Merged top to bottom — lower files override higher ones"
+                        : `${activeConfigFiles.length} of ${project.allConfigFiles.length} files active`}
+                    </span>
+                    {savingConfigFiles ? (
+                      <LoaderCircle size={14} className="busy spin compose-selector__spinner" aria-label="Applying compose file selection" />
+                    ) : null}
+                  </button>
+
+                  {composeSelectorOpen ? (
+                    <>
+                      <ol className="compose-file-order">
+                        {activeConfigFiles.map((file, index) => {
+                          const fileName = file.split(/[/\\]/).pop() ?? file;
+                          return (
+                            <li key={file} className="compose-file-order__item" title={file}>
+                              <span className="compose-file-order__index">{index + 1}</span>
+                              <span className="compose-file-order__name">{fileName}</span>
+                              <div className="compose-file-order__actions">
+                                <button
+                                  type="button"
+                                  className="icon-button icon-button--tiny"
+                                  disabled={index === 0}
+                                  onClick={() => handleReorderConfigFile(index, -1)}
+                                  aria-label={`Move ${fileName} earlier in the merge order`}
+                                >
+                                  <ArrowUp size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="icon-button icon-button--tiny"
+                                  disabled={index === activeConfigFiles.length - 1}
+                                  onClick={() => handleReorderConfigFile(index, 1)}
+                                  aria-label={`Move ${fileName} later in the merge order`}
+                                >
+                                  <ArrowDown size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="icon-button icon-button--tiny"
+                                  disabled={activeConfigFiles.length <= 1}
+                                  onClick={() => handleConfigFileToggle(file, false)}
+                                  aria-label={`Remove ${fileName} from the active compose files`}
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ol>
+
+                      {inactiveConfigFiles.length > 0 ? (
+                        <div className="compose-file-order__available">
+                          <span className="metadata-note">Add:</span>
+                          {inactiveConfigFiles.map((file) => {
+                            const fileName = file.split(/[/\\]/).pop() ?? file;
+                            return (
+                              <button
+                                type="button"
+                                key={file}
+                                className="chip-button"
+                                title={file}
+                                onClick={() => handleConfigFileToggle(file, true)}
+                              >
+                                <Plus size={12} />
+                                {fileName}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              )}
+
               <div className="stage-meta">
                 <span className="manifest-tag">{project.access}</span>
                 <span className="manifest-tag">{project.runtimeKind}</span>

@@ -12,6 +12,7 @@ const api: PreloadApi = {
   getServiceStats: (containerId) => ipcRenderer.invoke(IPC_CHANNELS.GET_SERVICE_STATS, containerId),
   updateSettings: (settings) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTINGS, settings),
   clearRecents: () => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_RECENTS),
+  updateProjectConfigFiles: (projectId, configFiles) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_PROJECT_CONFIG_FILES, projectId, configFiles),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => listener(payload);

@@ -1,4 +1,4 @@
-import { FolderPlus, LoaderCircle, MoonStar, RefreshCw, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
+import { FolderPlus, FolderTree, LoaderCircle, MoonStar, RefreshCw, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState, type DragEvent } from "react";
 import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contracts";
 import { useAppStore } from "./store";
@@ -47,6 +47,150 @@ function isAcceptedSource(path: string): boolean {
 
 type FileWithPath = File & { path?: string };
 
+type ProjectCardProps = {
+  project: ProjectSummary;
+  activeProjectId: string | undefined;
+  dockerStatus: DockerStatus | undefined;
+  staleHint: string;
+  onSelect(projectId: string): void;
+};
+
+function ProjectCard({ project, activeProjectId, dockerStatus, staleHint, onSelect }: ProjectCardProps) {
+  const location = project.sourcePath ?? project.configFiles[0] ?? "Runtime-only";
+  const stale = !dockerStatus?.daemonAvailable;
+
+  return (
+    <button
+      className={`project-card ${project.id === activeProjectId ? "project-card--active" : ""}`}
+      onClick={() => onSelect(project.id)}
+      title={stale ? staleHint : location}
+    >
+      <div className="project-card__head">
+        <div className="project-card__title">
+          <span
+            className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? projectState(project) : "stopped"} ${
+              dockerStatus?.daemonAvailable ? "" : "status-dot--stale"
+            } ${dockerStatus?.daemonAvailable && projectState(project) === "running" ? "pulse" : ""}`}
+          />
+          <span>{project.title}</span>
+        </div>
+        <span className="mini-icon-button" aria-hidden="true">
+          <FolderPlus size={14} />
+        </span>
+      </div>
+
+      <p className="mono-path" title={location}>
+        {middleTruncate(location, 24, 18)}
+      </p>
+
+      <div className="metadata-row">
+        <span className="manifest-tag">{project.services.length} services</span>
+        <span className="manifest-tag">{project.runtimeKind}</span>
+        <span className="manifest-tag" title={stale ? staleHint : "Docker was reachable when this project was last checked."}>
+          {dockerStatus?.daemonAvailable ? "reachable" : "stale"}
+        </span>
+      </div>
+
+      <div className="project-card__foot">
+        <span className="metadata-note">{project.contextName}</span>
+        <span className="metadata-note">{project.lastUpdatedLabel}</span>
+      </div>
+    </button>
+  );
+}
+
+type ProjectGroupCardProps = {
+  groupLabel: string;
+  projects: ProjectSummary[];
+  activeProjectId: string | undefined;
+  dockerStatus: DockerStatus | undefined;
+  staleHint: string;
+  onSelect(projectId: string): void;
+};
+
+// One card per folder scan that turned up multiple independent projects, with
+// every member listed inline so the user can see (and jump straight to) any
+// of them without drilling into the workspace first.
+function ProjectGroupCard({ groupLabel, projects, activeProjectId, dockerStatus, staleHint, onSelect }: ProjectGroupCardProps) {
+  const stale = !dockerStatus?.daemonAvailable;
+  const containsActive = projects.some((project) => project.id === activeProjectId);
+
+  return (
+    <div className={`project-card project-card--group ${containsActive ? "project-card--active" : ""}`}>
+      <div className="project-card__head">
+        <div className="project-card__title">
+          <FolderTree size={14} />
+          <span>{groupLabel}</span>
+        </div>
+        <span className="manifest-tag">{projects.length} projects</span>
+      </div>
+
+      <p className="metadata-note">Independent Compose projects detected in this folder</p>
+
+      <div className="project-group__members">
+        {projects.map((project) => {
+          const location = project.sourcePath ?? project.configFiles[0] ?? "Runtime-only";
+          return (
+            <button
+              key={project.id}
+              className={`project-group__member ${project.id === activeProjectId ? "project-group__member--active" : ""}`}
+              onClick={() => onSelect(project.id)}
+              title={stale ? staleHint : location}
+            >
+              <span
+                className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? projectState(project) : "stopped"} ${
+                  dockerStatus?.daemonAvailable ? "" : "status-dot--stale"
+                }`}
+              />
+              <span className="project-group__member-title">{project.title}</span>
+              <span className="metadata-note">{project.services.length} svc</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+type LauncherEntry =
+  | { kind: "single"; project: ProjectSummary }
+  | { kind: "group"; groupId: string; groupLabel: string; projects: ProjectSummary[] };
+
+// Sibling projects discovered from the same folder scan (e.g. docker-compose-auth.yml
+// and docker-compose-payment.yml side by side) share a groupId. Folding them into one
+// launcher entry keeps the sidebar from filling up with cards for what's really one
+// folder, while still surfacing every project inside it at a glance.
+function groupProjectsForLauncher(projects: ProjectSummary[]): LauncherEntry[] {
+  const groupSizes = new Map<string, number>();
+  for (const project of projects) {
+    if (project.groupId) {
+      groupSizes.set(project.groupId, (groupSizes.get(project.groupId) ?? 0) + 1);
+    }
+  }
+
+  const entries: LauncherEntry[] = [];
+  const seenGroups = new Set<string>();
+
+  for (const project of projects) {
+    if (project.groupId && (groupSizes.get(project.groupId) ?? 0) > 1) {
+      if (seenGroups.has(project.groupId)) {
+        continue;
+      }
+      seenGroups.add(project.groupId);
+      entries.push({
+        kind: "group",
+        groupId: project.groupId,
+        groupLabel: project.groupLabel ?? project.groupId,
+        projects: projects.filter((entry) => entry.groupId === project.groupId)
+      });
+    } else {
+      entries.push({ kind: "single", project });
+    }
+  }
+
+  return entries;
+}
+
 export function Sidebar({
   projects,
   activeProjectId,
@@ -92,6 +236,7 @@ export function Sidebar({
       return haystack.includes(term);
     });
   }, [deferredQuery, projects]);
+  const launcherEntries = useMemo(() => groupProjectsForLauncher(filteredProjects), [filteredProjects]);
   const showDaemonBanner = !dockerStatus?.daemonAvailable && !bannerDismissed;
   const showHeaderPrimary = projects.length > 0;
   const staleHint = dockerStatus?.checkedAt
@@ -216,51 +361,28 @@ export function Sidebar({
             </div>
           ) : (
             <div className="project-grid">
-              {filteredProjects.map((project) => {
-                const location = project.sourcePath ?? project.configFiles[0] ?? "Runtime-only";
-                const stale = !dockerStatus?.daemonAvailable;
-                return (
-                  <button
-                    key={project.id}
-                    className={`project-card ${project.id === activeProjectId ? "project-card--active" : ""}`}
-                    onClick={() => onSelect(project.id)}
-                    title={stale ? staleHint : location}
-                  >
-                    <div className="project-card__head">
-                      <div className="project-card__title">
-                        <span
-                          className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? projectState(project) : "stopped"} ${
-                            dockerStatus?.daemonAvailable ? "" : "status-dot--stale"
-                          } ${
-                            dockerStatus?.daemonAvailable && projectState(project) === "running" ? "pulse" : ""
-                          }`}
-                        />
-                        <span>{project.title}</span>
-                      </div>
-                      <span className="mini-icon-button" aria-hidden="true">
-                        <FolderPlus size={14} />
-                      </span>
-                    </div>
-
-                    <p className="mono-path" title={location}>
-                      {middleTruncate(location, 24, 18)}
-                    </p>
-
-                    <div className="metadata-row">
-                      <span className="manifest-tag">{project.services.length} services</span>
-                      <span className="manifest-tag">{project.runtimeKind}</span>
-                      <span className="manifest-tag" title={stale ? staleHint : "Docker was reachable when this project was last checked."}>
-                        {dockerStatus?.daemonAvailable ? "reachable" : "stale"}
-                      </span>
-                    </div>
-
-                    <div className="project-card__foot">
-                      <span className="metadata-note">{project.contextName}</span>
-                      <span className="metadata-note">{project.lastUpdatedLabel}</span>
-                    </div>
-                  </button>
-                );
-              })}
+              {launcherEntries.map((entry) =>
+                entry.kind === "single" ? (
+                  <ProjectCard
+                    key={entry.project.id}
+                    project={entry.project}
+                    activeProjectId={activeProjectId}
+                    dockerStatus={dockerStatus}
+                    staleHint={staleHint}
+                    onSelect={onSelect}
+                  />
+                ) : (
+                  <ProjectGroupCard
+                    key={entry.groupId}
+                    groupLabel={entry.groupLabel}
+                    projects={entry.projects}
+                    activeProjectId={activeProjectId}
+                    dockerStatus={dockerStatus}
+                    staleHint={staleHint}
+                    onSelect={onSelect}
+                  />
+                )
+              )}
             </div>
           )}
         </div>

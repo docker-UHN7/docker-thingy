@@ -1,7 +1,7 @@
 import { dialog } from "electron";
 import { randomUUID } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readFile, readdir, stat } from "node:fs/promises";
+import { join, dirname, basename, extname } from "node:path";
 import type {
   AppSettings,
   AppSnapshot,
@@ -90,26 +90,134 @@ export function mergeProjectLists(
   return [...mergedSourceProjects, ...remainingRuntimeProjects];
 }
 
-const COMPOSE_FILE_CANDIDATES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
+export interface ComposeProjectGroup {
+  mainFile: string;
+  relatedFiles: string[];
+  allConfigFiles: string[];
+  defaultSelected: string[];
+}
 
-async function resolveSourcePathFromDirectory(directoryPath: string): Promise<string | undefined> {
-  for (const candidate of COMPOSE_FILE_CANDIDATES) {
-    const candidatePath = join(directoryPath, candidate);
-    try {
-      await access(candidatePath);
-      return candidatePath;
-    } catch {
-      // Try the next candidate.
-    }
-  }
-
-  const dockerfilePath = join(directoryPath, "Dockerfile");
+export async function scanDirectoryForComposeProjects(directoryPath: string): Promise<ComposeProjectGroup[]> {
   try {
-    await access(dockerfilePath);
-    return dockerfilePath;
+    const entries = await readdir(directoryPath);
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      const fullPath = join(directoryPath, entry);
+      try {
+        const info = await stat(fullPath);
+        if (info.isFile()) {
+          const ext = extname(entry).toLowerCase();
+          if ((ext === ".yml" || ext === ".yaml") && entry.toLowerCase().includes("compose")) {
+            files.push(entry);
+          }
+        }
+      } catch {
+        // Ignore files we cannot stat
+      }
+    }
+
+    const groupsMap = new Map<string, string[]>();
+    for (const file of files) {
+      const ext = extname(file);
+      const baseName = basename(file, ext);
+      
+      const dotIndex = baseName.indexOf(".");
+      const parentBase = dotIndex === -1 ? baseName : baseName.slice(0, dotIndex);
+      
+      let list = groupsMap.get(parentBase);
+      if (!list) {
+        list = [];
+        groupsMap.set(parentBase, list);
+      }
+      list.push(file);
+    }
+
+    const projectGroups: ComposeProjectGroup[] = [];
+
+    for (const [parentBase, groupFiles] of groupsMap.entries()) {
+      const standardOrder = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+      let mainFile: string | undefined;
+
+      for (const std of standardOrder) {
+        if (groupFiles.includes(std)) {
+          mainFile = std;
+          break;
+        }
+      }
+
+      if (!mainFile) {
+        mainFile = groupFiles.find((file) => {
+          const ext = extname(file);
+          const baseName = basename(file, ext);
+          return baseName === parentBase;
+        });
+      }
+
+      if (!mainFile) {
+        mainFile = groupFiles[0];
+      }
+
+      if (!mainFile) {
+        continue;
+      }
+
+      const mainFullPath = join(directoryPath, mainFile);
+
+      const relatedFiles = groupFiles
+        .filter((file) => file !== mainFile)
+        .map((file) => join(directoryPath, file));
+
+      const allConfigFiles = [mainFullPath, ...relatedFiles];
+
+      const defaultSelected = [mainFullPath];
+      const mainExt = extname(mainFile);
+      const mainBaseName = basename(mainFile, mainExt);
+      const expectedOverrideName = `${mainBaseName}.override${mainExt}`;
+      const overrideCandidates = [
+        expectedOverrideName,
+        "compose.override.yaml",
+        "compose.override.yml",
+        "docker-compose.override.yaml",
+        "docker-compose.override.yml"
+      ];
+
+      for (const related of groupFiles.filter((f) => f !== mainFile)) {
+        if (overrideCandidates.includes(related) || related.toLowerCase().includes(".override.")) {
+          defaultSelected.push(join(directoryPath, related));
+        }
+      }
+
+      projectGroups.push({
+        mainFile: mainFullPath,
+        relatedFiles,
+        allConfigFiles,
+        defaultSelected
+      });
+    }
+
+    return projectGroups;
   } catch {
-    return undefined;
+    return [];
   }
+}
+
+// When a single folder scan turns up more than one independent project
+// (e.g. docker-compose-auth.yml and docker-compose-payment.yml), tag them all
+// with the same groupId so the sidebar can fold them into one card and the
+// workspace can offer a tab strip to switch between them, instead of forcing
+// the user back out to the launcher every time. A lone project gets no group.
+export function applyProjectGrouping(directoryPath: string, projects: ProjectSummary[]): ProjectSummary[] {
+  if (projects.length <= 1) {
+    return projects;
+  }
+
+  const groupLabel = basename(directoryPath);
+  return projects.map((project) => ({
+    ...project,
+    groupId: directoryPath,
+    groupLabel
+  }));
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -224,23 +332,39 @@ export class ProjectService {
     });
   }
 
-  private async loadProjectFromPath(sourcePath: string): Promise<ProjectSummary> {
+  private async loadProjectFromPath(sourcePath: string, configFiles?: string[]): Promise<ProjectSummary> {
     const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
     return /(^|[\\/])dockerfile$/i.test(sourcePath)
       ? loadDockerfileProject(sourcePath, contextName)
-      : loadComposeProject(sourcePath, contextName);
+      : loadComposeProject(sourcePath, contextName, configFiles);
   }
 
-  private async commitOpenedProject(sourcePath: string, project: ProjectSummary): Promise<OpenSourceResult> {
-    const sourceText = await readFile(sourcePath, "utf8");
+  private async commitOpenedProjects(
+    sourcePath: string | undefined,
+    mainProject: ProjectSummary | undefined,
+    allProjects: ProjectSummary[]
+  ): Promise<OpenSourceResult> {
+    // Explicit guard to ensure these are defined strings/objects
+    if (!mainProject || !sourcePath) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "Failed to load project." }
+      };
+    }
+
+    const isDockerfile = mainProject.runtimeKind === "dockerfile";
+    const sourceText = isDockerfile ? "" : await readFile(sourcePath, "utf8");
 
     this.snapshot = {
       ...this.snapshot,
-      projects: [project, ...this.snapshot.projects.filter((entry) => entry.id !== project.id)],
+      projects: [
+        ...allProjects,
+        ...this.snapshot.projects.filter((entry) => !allProjects.some((p) => p.id === entry.id))
+      ],
       recents: [sourcePath, ...this.snapshot.recents.filter((entry) => entry !== sourcePath)].slice(0, 12),
-      activeProjectId: project.id,
-      activeSourceSession: {
-        id: project.id,
+      activeProjectId: mainProject.id,
+      activeSourceSession: isDockerfile ? undefined : {
+        id: mainProject.id,
         sourcePath,
         revision: 1,
         lastKnownHash: hashSource(sourceText),
@@ -250,7 +374,7 @@ export class ProjectService {
 
     return {
       ok: true,
-      data: project
+      data: mainProject
     };
   }
 
@@ -270,8 +394,15 @@ export class ProjectService {
       };
     }
 
-    const sourcePath = await resolveSourcePathFromDirectory(directoryPath);
-    if (!sourcePath) {
+    const groups = await scanDirectoryForComposeProjects(directoryPath);
+    const dockerfilePath = join(directoryPath, "Dockerfile");
+    let hasDockerfile = false;
+    try {
+      await access(dockerfilePath);
+      hasDockerfile = true;
+    } catch {}
+
+    if (groups.length === 0 && !hasDockerfile) {
       return {
         ok: false,
         error: {
@@ -281,25 +412,100 @@ export class ProjectService {
       };
     }
 
-    return this.openSourcePath(sourcePath);
+    const loadedProjects: ProjectSummary[] = [];
+    const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+
+    for (const group of groups) {
+      try {
+        const project = await loadComposeProject(group.mainFile, contextName, group.defaultSelected);
+        project.allConfigFiles = group.allConfigFiles;
+        loadedProjects.push(project);
+      } catch (e) {
+        // Ignore single load errors
+      }
+    }
+
+    if (hasDockerfile) {
+      try {
+        const project = await loadDockerfileProject(dockerfilePath, contextName);
+        loadedProjects.push(project);
+      } catch {}
+    }
+
+    if (loadedProjects.length === 0) {
+      return {
+        ok: false,
+        error: {
+          code: "VALIDATION_FAILED",
+          message: "Could not successfully parse any projects in the selected folder."
+        }
+      };
+    }
+
+    const groupedProjects = applyProjectGrouping(directoryPath, loadedProjects);
+    const mainProject = groupedProjects[0];
+    if (!mainProject) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "Could not successfully parse any projects in the selected folder." }
+      };
+    }
+
+    return this.commitOpenedProjects(mainProject.sourcePath || mainProject.configFiles[0] || dockerfilePath, mainProject, groupedProjects);
   }
 
   async openSourcePath(sourcePath: string): Promise<OpenSourceResult> {
     if (typeof sourcePath !== "string" || sourcePath.trim() === "") {
       return {
         ok: false,
-        error: {
-          code: "VALIDATION_FAILED",
-          message: "No source path was provided."
-        }
+        error: { code: "VALIDATION_FAILED", message: "No source path was provided." }
       };
     }
 
     return this.withLock(async () => {
       try {
         await access(sourcePath);
-        const project = await this.loadProjectFromPath(sourcePath);
-        return this.commitOpenedProject(sourcePath, project);
+        const directoryPath = dirname(sourcePath);
+        const isDockerfile = /(^|[\\/])dockerfile$/i.test(sourcePath);
+
+        if (isDockerfile) {
+          const project = await this.loadProjectFromPath(sourcePath);
+          return this.commitOpenedProjects(sourcePath, project, [project]);
+        }
+
+        const groups = await scanDirectoryForComposeProjects(directoryPath);
+        const matchingGroup = groups.find((g) => g.allConfigFiles.includes(sourcePath)) ?? {
+          mainFile: sourcePath,
+          relatedFiles: [],
+          allConfigFiles: [sourcePath],
+          defaultSelected: [sourcePath]
+        };
+
+        const activeFiles = [...matchingGroup.defaultSelected];
+        if (matchingGroup.mainFile && !activeFiles.includes(matchingGroup.mainFile)) {
+          activeFiles.push(matchingGroup.mainFile);
+        }
+
+        const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+        const mainFile = matchingGroup.mainFile || sourcePath;
+        const loadedProject = await loadComposeProject(mainFile, contextName, activeFiles);
+        
+        loadedProject.allConfigFiles = matchingGroup.allConfigFiles ?? [mainFile];
+
+        const otherLoadedProjects: ProjectSummary[] = [];
+        for (const g of groups) {
+          if (g.mainFile === matchingGroup.mainFile) {
+            continue;
+          }
+          try {
+            const p = await loadComposeProject(g.mainFile, contextName, g.defaultSelected);
+            p.allConfigFiles = g.allConfigFiles;
+            otherLoadedProjects.push(p);
+          } catch {}
+        }
+
+        const groupedProjects = applyProjectGrouping(directoryPath, [loadedProject, ...otherLoadedProjects]);
+        return this.commitOpenedProjects(sourcePath, groupedProjects[0] ?? loadedProject, groupedProjects);
       } catch (error) {
         return {
           ok: false,
@@ -314,6 +520,45 @@ export class ProjectService {
 
   async openRecentSource(sourcePath: string): Promise<OpenSourceResult> {
     return this.openSourcePath(sourcePath);
+  }
+
+  async updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<AppSnapshot> {
+    return this.withLock(async () => {
+      const project = this.snapshot.projects.find((p) => p.id === projectId);
+      if (!project || project.runtimeKind !== "compose") {
+        throw new Error("Project not found or is not a Compose project.");
+      }
+
+      const mainPath = project.sourcePath ?? project.configFiles[0];
+      if (!mainPath) {
+        throw new Error("Project has no known source path.");
+      }
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const updatedProject = await loadComposeProject(mainPath, contextName, configFiles);
+
+      if (project.allConfigFiles) {
+        updatedProject.allConfigFiles = project.allConfigFiles;
+      }
+
+      // loadComposeProject builds a fresh ProjectSummary from the YAML files
+      // alone, so it knows nothing about the folder-scan grouping applied at
+      // open time. Without carrying these over, toggling a checkbox would
+      // silently knock the project out of its group and drop its tab strip.
+      if (project.groupId) {
+        updatedProject.groupId = project.groupId;
+        updatedProject.groupLabel = project.groupLabel;
+      }
+
+      this.snapshot = {
+        ...this.snapshot,
+        projects: this.snapshot.projects.map((p) =>
+          p.id === projectId ? updatedProject : p
+        )
+      };
+
+      return this.snapshot;
+    });
   }
 
   async getServiceLogs(containerId: string, tail: number): Promise<LogSnapshotResult> {

@@ -403,32 +403,137 @@ function toServiceModels(document: Document): ServiceNodeModel[] {
   });
 }
 
-export async function loadComposeProject(sourcePath: string, contextName: string): Promise<ProjectSummary> {
-  const sourceText = await readFile(sourcePath, "utf8");
-  const document = parseDocument(sourceText, {
-    keepSourceTokens: true
-  });
+function dedupePortMappings(portMappings: PortMapping[]): PortMapping[] {
+  const seen = new Set<string>();
+  const output: PortMapping[] = [];
 
-  const services = toServiceModels(document);
-  const diagnostics: ProjectDiagnostics[] = [];
+  for (const port of portMappings) {
+    const key =
+      port.state === "published" && port.hostPort
+        ? `${port.hostPort}:${port.containerPort}/${port.protocol}`
+        : `${port.state}:${port.containerPort}/${port.protocol}`;
 
-  for (const service of services) {
-    if (service.sourceHints?.buildContext) {
-      diagnostics.push(...describeComposePath(service.sourceHints.buildContext));
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    output.push(port);
+  }
+
+  return output;
+}
+
+function mergeDependencyDetails(base: DependencyDescriptor[], override: DependencyDescriptor[]): DependencyDescriptor[] {
+  const result = [...base];
+  for (const overDep of override) {
+    const existingIndex = result.findIndex((d) => d.serviceName === overDep.serviceName);
+    if (existingIndex === -1) {
+      // Ensure all required fields are present
+      result.push({
+        serviceName: overDep.serviceName,
+        condition: overDep.condition,
+        external: overDep.external
+      });
+    } else {
+      // Update existing
+      result[existingIndex] = {
+        ...result[existingIndex]!,
+        condition: overDep.condition ?? result[existingIndex]!.condition
+      };
     }
   }
+  return result;
+}
+
+function mergeComposeServices(base: ServiceNodeModel[], override: ServiceNodeModel[]): ServiceNodeModel[] {
+  const result = [...base];
+  for (const overService of override) {
+    const existingIndex = result.findIndex((s) => s.name === overService.name);
+    
+    if (existingIndex === -1) {
+      result.push(overService);
+    } else {
+      const baseService = result[existingIndex]!; // Use ! to tell TS you checked the index exists
+      const mergedPorts = dedupePortMappings([...baseService.portMappings, ...overService.portMappings]);
+      
+      // We must explicitly include the ID from the base service
+      result[existingIndex] = {
+        ...baseService, // Keep the original ID
+        image: overService.image ?? baseService.image,
+        ports: mergedPorts.map((entry) => entry.label),
+        portMappings: mergedPorts,
+        dependencies: [...new Set([...baseService.dependencies, ...overService.dependencies])],
+        dependencyDetails: mergeDependencyDetails(baseService.dependencyDetails, overService.dependencyDetails),
+        declaredNetworks: [...new Set([...baseService.declaredNetworks, ...overService.declaredNetworks])],
+        categories: {
+          containers: [...baseService.categories.containers, ...overService.categories.containers],
+          networks: [...new Set([...baseService.categories.networks, ...overService.categories.networks])],
+          volumes: [...new Set([...baseService.categories.volumes, ...overService.categories.volumes])]
+        },
+        sourceHints: {
+          buildContext: overService.sourceHints?.buildContext ?? baseService.sourceHints?.buildContext,
+          dockerfilePath: overService.sourceHints?.dockerfilePath ?? baseService.sourceHints?.dockerfilePath,
+          expose: [...new Set([...(baseService.sourceHints?.expose ?? []), ...(overService.sourceHints?.expose ?? [])])]
+        }
+      };
+    }
+  }
+  return result;
+}
+
+export async function loadComposeProject(
+  sourcePath: string,
+  contextName: string,
+  configFiles?: string[]
+): Promise<ProjectSummary> {
+  const activeFiles = configFiles && configFiles.length > 0 ? configFiles : [sourcePath];
+  let mergedServices: ServiceNodeModel[] = [];
+  const diagnostics: ProjectDiagnostics[] = [];
+
+  for (const filePath of activeFiles) {
+    try {
+      const sourceText = await readFile(filePath, "utf8");
+      const document = parseDocument(sourceText, {
+        keepSourceTokens: true
+      });
+
+      const services = toServiceModels(document);
+      mergedServices = mergeComposeServices(mergedServices, services);
+
+      for (const service of services) {
+        if (service.sourceHints?.buildContext) {
+          diagnostics.push(...describeComposePath(service.sourceHints.buildContext));
+        }
+      }
+    } catch (e) {
+      diagnostics.push({
+        level: "error",
+        title: `Failed to load ${filePath.split(/[/\\]/).at(-1)}`,
+        message: e instanceof Error ? e.message : "Error reading or parsing file."
+      });
+    }
+  }
+
+  // Deduplicate diagnostics
+  const uniqueDiagnostics = diagnostics.filter(
+    (diag, index, self) =>
+      index === self.findIndex((d) => d.title === diag.title && d.message === diag.message)
+  );
 
   return {
     id: `source-compose:${contextName}:${sourcePath}`,
     title: sourcePath.split(/[/\\]/).at(-1) ?? sourcePath,
-    subtitle: "Explicitly opened Compose source",
+    subtitle: activeFiles.length > 1
+      ? `Merged Compose source (${activeFiles.length} files)`
+      : "Explicitly opened Compose source",
     runtimeKind: "compose",
     access: "editable",
     contextName,
     sourcePath,
-    configFiles: [sourcePath],
-    services,
-    diagnostics,
+    configFiles: activeFiles,
+    services: mergedServices,
+    diagnostics: uniqueDiagnostics,
     actions: [
       { id: "validate", label: "Validate", emphasis: "primary" },
       { id: "apply-start", label: "Apply & Start", confirmation: "Apply changes and start this Compose project?" },
@@ -436,8 +541,8 @@ export async function loadComposeProject(sourcePath: string, contextName: string
     ],
     lastUpdatedLabel: "Opened from source",
     lastCheckedAt: new Date().toISOString(),
-    externalNodes: inferExternalNodes(services),
-    relationshipEdges: buildRelationshipEdges(services),
+    externalNodes: inferExternalNodes(mergedServices),
+    relationshipEdges: buildRelationshipEdges(mergedServices),
     sourceLinked: true
   };
 }
