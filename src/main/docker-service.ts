@@ -709,8 +709,10 @@ function mergeRuntimeProjectWithSource(
   return {
     ...runtimeProject,
     services: mergedServices,
+    composeProjectName: runtimeProject.composeProjectName,
     sourcePath: sourceProject.sourcePath,
     diagnostics: [...sourceProject.diagnostics],
+    buildStatus: "built",
     externalNodes: buildExternalNodes(mergedServices),
     relationshipEdges: buildRelationshipEdges(mergedServices),
     sourceLinked: true
@@ -721,8 +723,8 @@ function mergeRuntimeProjectWithSource(
  * The counterpart to `mergeRuntimeProjectWithSource`, used when a project was
  * already opened explicitly from source (and already has a stable
  * `source-compose:...` id, editable actions, etc.) and a *separate*
- * runtime-discovered card for the exact same Compose file shows up on
- * refresh. Keeps the source project's identity (id/access/actions/title) -
+ * runtime-discovered card for the exact same Compose file shows up during a
+ * live sync. Keeps the source project's identity (id/access/actions/title) -
  * which is what `activeProjectId` points at - while pulling in live
  * container status per service, so the two never render as duplicate cards
  * and the active selection never has to jump to a different project just
@@ -749,10 +751,12 @@ export function mergeSourceProjectWithRuntime(
   return {
     ...sourceProject,
     subtitle: runtimeProject.subtitle,
+    composeProjectName: runtimeProject.composeProjectName,
     services: mergedServices,
+    buildStatus: "built",
     externalNodes: buildExternalNodes(mergedServices),
     relationshipEdges: buildRelationshipEdges(mergedServices),
-    lastUpdatedLabel: "Just refreshed",
+    lastUpdatedLabel: "Live runtime",
     lastCheckedAt: new Date().toISOString(),
     sourceLinked: true
   };
@@ -919,6 +923,7 @@ function standaloneContainerProject(
     runtimeKind: "container",
     access: "runtime-only",
     contextName,
+    composeProjectName: undefined,
     configFiles: [],
     services: [service],
     diagnostics: [
@@ -928,8 +933,9 @@ function standaloneContainerProject(
         message: "This container was discovered directly from the active daemon and is not linked to an editable source project."
       }
     ],
-    actions: [{ id: "refresh", label: "Refresh" }],
-    lastUpdatedLabel: "Just refreshed",
+    actions: [],
+    buildStatus: "built",
+    lastUpdatedLabel: "Live runtime",
     lastCheckedAt: new Date().toISOString(),
     externalNodes: [],
     relationshipEdges: buildRelationshipEdges([service]),
@@ -993,7 +999,7 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
         // directory's basename) isn't a reliably unique key - two unrelated
         // directories can easily share a name. Fold in the resolved config
         // file path too so those don't collide into a single id and cause
-        // the active project to silently flip to the wrong card on refresh.
+        // the active project to silently flip to the wrong card during a sync.
         const configIdentity = resolvedConfigFiles[0] ? resolveConfigKey(resolvedConfigFiles[0]) : "no-config-file";
 
         const runtimeProject = {
@@ -1003,6 +1009,7 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
           runtimeKind: "compose" as const,
           access: "runtime-only" as const,
           contextName,
+          composeProjectName: project.Name,
           sourcePath: undefined,
           configFiles: resolvedConfigFiles,
           services,
@@ -1015,11 +1022,17 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
                 }
               ]
             : [],
-          actions: [
-            { id: "refresh" as const, label: "Refresh" },
-            { id: "open-source" as const, label: "Open and verify source", emphasis: "primary" as const }
-          ],
-          lastUpdatedLabel: "Just refreshed",
+          actions: resolvedConfigFiles.length > 0
+            ? [
+                { id: "validate" as const, label: "Validate", emphasis: "primary" as const },
+                { id: "build-image" as const, label: "Build" },
+                { id: "start" as const, label: "Start" },
+                { id: "apply-start" as const, label: "Apply & Start" },
+                { id: "stop" as const, label: "Stop", emphasis: "danger" as const }
+              ]
+            : [],
+          buildStatus: "built" as const,
+          lastUpdatedLabel: "Live runtime",
           lastCheckedAt: new Date().toISOString(),
           externalNodes: buildExternalNodes(services),
           relationshipEdges: buildRelationshipEdges(services),

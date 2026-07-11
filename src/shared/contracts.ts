@@ -248,7 +248,7 @@ export type ProjectDiagnostics = {
 };
 
 export type ProjectAction = {
-  id: "refresh" | "open-source" | "validate" | "start" | "apply-start" | "stop" | "build-image";
+  id: "open-source" | "validate" | "start" | "apply-start" | "stop" | "build-image";
   label: string;
   emphasis?: "primary" | "danger" | "neutral" | undefined;
   disabled?: boolean | undefined;
@@ -277,6 +277,7 @@ export type ProjectSummary = {
   runtimeKind: RuntimeKind;
   access: ProjectAccess;
   contextName: string;
+  composeProjectName?: string | undefined;
   sourcePath?: string | undefined;
   configFiles: string[];
   allConfigFiles?: string[];
@@ -285,6 +286,7 @@ export type ProjectSummary = {
   services: ServiceNodeModel[];
   diagnostics: ProjectDiagnostics[];
   actions: ProjectAction[];
+  buildStatus: "not-built" | "built";
   lastUpdatedLabel: string;
   lastCheckedAt?: string | undefined;
   externalNodes: GraphExternalNode[];
@@ -302,7 +304,6 @@ export type SourceSession = {
 
 export const AppSettingsSchema = z.object({
   themeMode: z.enum(["light", "dark", "system"]),
-  runtimeRefreshSeconds: z.number().int().positive().nullable(),
   statsPollSeconds: z.number().int().positive().nullable(),
   logTailLines: z.number().int().positive().max(10_000)
 });
@@ -319,7 +320,6 @@ export type AppSnapshot = {
 };
 
 export type OpenSourceResult = Result<ProjectSummary>;
-export type RefreshRuntimeResult = Result<AppSnapshot>;
 export type LogSnapshotResult = Result<{
   containerId: string;
   lines: string[];
@@ -351,7 +351,7 @@ export type BuildTarget = {
 
 export type OperationStream = "stdout" | "stderr";
 
-export type ExecutableProjectActionId = "validate" | "apply-start" | "stop" | "build-image";
+export type ExecutableProjectActionId = "validate" | "start" | "apply-start" | "stop" | "build-image";
 
 export type OperationEvent =
   | {
@@ -381,7 +381,6 @@ export type ProjectActionResult = Result<{
 
 export type PreloadApi = {
   getSnapshot(): Promise<AppSnapshot>;
-  refreshRuntime(): Promise<RefreshRuntimeResult>;
   openSource(): Promise<OpenSourceResult>;
   openSourcePath(sourcePath: string): Promise<OpenSourceResult>;
   openRecentSource(sourcePath: string): Promise<OpenSourceResult>;
@@ -392,4 +391,5 @@ export type PreloadApi = {
   updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<AppSnapshot>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
+  subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;
 };

@@ -55,12 +55,12 @@
   --border-subtle: #243038;
   --border-strong: #37454F;
   --text-primary: #E9EEF2;
-  --text-secondary: #8FA0AC;
-  --text-tertiary: #5C6C77;
+  --text-secondary: #B5C2CB;
+  --text-tertiary: #93A1AB;
   --accent-copper: #E2984B;
   --accent-copper-muted: #8A6234;
   --status-running: #46B893;
-  --status-stopped: #5C6C77;
+  --status-stopped: #8B99A3;
   --status-warning: #E0B23D;
   --status-error: #E5484D;
   --status-info: #4FA0DB;
@@ -112,8 +112,10 @@ button {
 }
 
 .app-shell {
+  height: 100vh;
   min-height: 100vh;
   position: relative;
+  overflow: hidden;
   background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--accent-copper) 8%, transparent), transparent 28%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, transparent), transparent 180px),
@@ -122,7 +124,8 @@ button {
 
 .launcher-screen,
 .workspace-screen {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -279,6 +282,18 @@ button {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5) 0;
+}
+
+/* Nested inside the narrow top-left floating project card instead of a
+   full-width header, so it drops the outer padding (the card's own grid
+   gap already spaces it) and shrinks the tab hit targets to fit. */
+.project-tabs--panel {
+  padding: 0;
+}
+
+.project-tabs--panel .project-tab {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
 }
 
 .project-tab {
@@ -532,7 +547,8 @@ button {
 .button:focus-visible,
 .icon-button:focus-visible,
 .project-card:focus-visible,
-.detail-tab:focus-visible {
+.detail-tab:focus-visible,
+.split-button__segment:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent-copper) 20%, transparent);
   outline-offset: 0;
   box-shadow: inset 0 0 0 1px var(--accent-copper);
@@ -921,35 +937,23 @@ button {
   animation: panel-enter 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.workspace-frame {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
-  gap: var(--space-5);
-  align-items: start;
-}
-
-.graph-stage {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: var(--space-4);
-  min-height: 720px;
-  padding: var(--space-4);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-panel);
-}
-
-.graph-stage__header {
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
+.workspace-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .graph-shell {
-  min-height: 620px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   background: var(--bg-canvas);
+}
+
+.graph-shell .react-flow {
+  width: 100%;
+  height: 100%;
 }
 
 .detail-panel {
@@ -960,7 +964,9 @@ button {
   padding: var(--space-4);
   box-shadow: var(--shadow-panel);
   animation: panel-enter 200ms cubic-bezier(0.2, 0, 0, 1);
-  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
 }
 
 .detail-tabs {
@@ -1030,13 +1036,10 @@ button {
   color: var(--status-error);
 }
 
-.detail-panel--empty {
-  min-height: 240px;
-  display: grid;
-  align-content: center;
-  justify-items: start;
-  text-align: left;
-  gap: var(--space-2);
+.detail-panel--overlay {
+  width: 320px;
+  max-height: min(70vh, 720px);
+  overflow: auto;
 }
 
 .detail-list__row--column {
@@ -1087,6 +1090,396 @@ button {
   gap: var(--space-3);
 }
 
+.project-action-toolbar,
+.validation-progress-row__head,
+.operation-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.project-action-toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.workspace-panel,
+.floating-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+}
+
+.workspace-panel {
+  padding: var(--space-3);
+}
+
+.workspace-panel--project {
+  min-width: 228px;
+  max-width: min(300px, calc(100vw - 32px));
+}
+
+.workspace-panel--toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  flex-wrap: wrap;
+  max-width: min(960px, calc(100vw - 32px));
+}
+
+.workspace-project-card,
+.workspace-project-card__header,
+.workspace-project-card__title-block {
+  display: grid;
+}
+
+.workspace-project-card {
+  gap: var(--space-2);
+}
+
+.workspace-project-card__header {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.workspace-project-card__title-block {
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.workspace-project-card__meta {
+  padding-left: calc(32px + var(--space-2));
+}
+
+.workspace-toolbar__cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.workspace-toolbar__divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border-subtle);
+}
+
+.floating-panel--validate,
+.floating-panel--operation {
+  padding: var(--space-3);
+}
+
+.operation-progress,
+.operation-progress__steps,
+.operation-progress__step {
+  min-width: 0;
+}
+
+.floating-panel--validate {
+  min-width: 280px;
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.floating-panel--operation {
+  min-width: 360px;
+  max-width: min(640px, calc(100vw - 32px));
+  max-height: min(70vh, calc(100vh - 32px));
+  overflow: hidden;
+}
+
+.floating-panel--success {
+  border-color: color-mix(in srgb, var(--status-running) 45%, transparent);
+}
+
+.floating-panel--error {
+  border-color: color-mix(in srgb, var(--status-error) 45%, transparent);
+}
+
+.floating-panel--warning {
+  border-color: color-mix(in srgb, var(--status-warning) 45%, transparent);
+}
+
+.validate-toast__header,
+.validate-toast__toggle,
+.operation-progress__header,
+.operation-progress__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.validate-toast__header {
+  font-size: var(--text-body);
+  line-height: 20px;
+  color: var(--text-primary);
+}
+
+.validate-toast__details {
+  margin-top: var(--space-2);
+}
+
+.validate-toast__toggle {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0;
+  cursor: pointer;
+}
+
+.validate-toast__chevron {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.validate-toast__chevron--open {
+  transform: rotate(180deg);
+}
+
+.validate-toast__log {
+  margin-top: var(--space-2);
+  max-height: 280px;
+  overflow: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--log-bg);
+}
+
+.operation-progress__steps {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  min-width: 0;
+}
+
+.operation-progress--inline {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.floating-panel--operation .operation-progress__steps,
+.operation-progress--inline .operation-progress__steps {
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.floating-panel--operation .operation-progress__steps {
+  max-height: min(52vh, calc(100vh - 144px));
+}
+
+.detail-panel--overlay .operation-progress--inline .operation-progress__steps {
+  max-height: min(44vh, calc(100vh - 220px));
+}
+
+.operation-progress__step {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.operation-progress__icon {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.operation-progress__label {
+  min-width: 0;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-progress__track {
+  width: 100%;
+  min-width: 0;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--bg-canvas) 75%, var(--bg-elevated));
+}
+
+.operation-progress__bar {
+  height: 100%;
+  max-width: 100%;
+  border-radius: inherit;
+  transition: width 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.operation-progress__bar--active {
+  background: var(--accent-copper);
+  animation: validation-progress 1.2s ease-in-out infinite alternate;
+}
+
+.operation-progress__bar--done {
+  background: var(--status-running);
+}
+
+.operation-progress__bar--failed {
+  background: var(--status-error);
+}
+
+.operation-progress__bar--pending {
+  background: transparent;
+}
+
+.operation-progress__failure {
+  min-width: 0;
+  padding-left: calc(16px + var(--space-2));
+}
+
+.operation-progress__failure .validate-toast__log {
+  max-width: 100%;
+}
+
+[data-theme="dark"] .floating-panel--operation,
+[data-theme="dark"] .floating-panel--validate,
+[data-theme="dark"] .detail-panel--overlay .diagnostic p,
+[data-theme="dark"] .detail-panel--overlay .metadata-note,
+[data-theme="dark"] .detail-panel--overlay .toolbar-note,
+[data-theme="dark"] .detail-panel--overlay .mono-key,
+[data-theme="dark"] .detail-panel--overlay .mono-path,
+[data-theme="dark"] .detail-panel--overlay .detail-tab,
+[data-theme="dark"] .detail-list__row--loading .mono-value,
+[data-theme="dark"] .operation-progress__label,
+[data-theme="dark"] .validate-toast__toggle {
+  color: #D7E0E6;
+}
+
+[data-theme="dark"] .detail-panel--overlay .metadata-note,
+[data-theme="dark"] .detail-panel--overlay .toolbar-note,
+[data-theme="dark"] .detail-panel--overlay .mono-key,
+[data-theme="dark"] .detail-panel--overlay .mono-path,
+[data-theme="dark"] .detail-tab {
+  color: #C3CFD7;
+}
+
+[data-theme="dark"] .detail-list__row--loading {
+  color: #D7E0E6;
+}
+
+.split-button {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  height: 36px;
+}
+
+.split-button__segment {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background 120ms cubic-bezier(0.2, 0, 0, 1),
+    color 120ms cubic-bezier(0.2, 0, 0, 1),
+    border-color 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.split-button--primary .split-button__segment {
+  background: var(--accent-copper);
+  color: var(--bg-canvas);
+}
+
+.split-button--primary .split-button__segment:hover {
+  background: color-mix(in srgb, var(--accent-copper) 90%, var(--bg-canvas));
+}
+
+.split-button--danger .split-button__segment {
+  background: transparent;
+  color: var(--status-error);
+  border-color: color-mix(in srgb, var(--status-error) 40%, transparent);
+}
+
+.split-button--danger .split-button__segment:hover {
+  background: var(--bg-elevated-hover);
+}
+
+.split-button__segment:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.split-button__segment:disabled:hover {
+  background: inherit;
+}
+
+.split-button__segment--main {
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  border-top-left-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.split-button__segment--arrow {
+  width: 32px;
+  min-width: 32px;
+  justify-content: center;
+  padding: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  margin-left: -1px;
+  position: relative;
+}
+
+.split-button__segment--arrow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+}
+
+.split-button--danger .split-button__segment--arrow::before {
+  background: color-mix(in srgb, var(--status-error) 40%, transparent);
+}
+
+.split-button__menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  min-width: 180px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-panel);
+  z-index: 10;
+}
+
+.split-button__menu-item {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.split-button__menu-item:hover {
+  background: var(--bg-elevated-hover);
+}
+
 .action-row {
   flex-wrap: wrap;
 }
@@ -1112,6 +1505,55 @@ button {
   color: var(--text-secondary);
 }
 
+.operation-status {
+  justify-content: flex-start;
+}
+
+.validation-progress-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.validation-progress-row {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.validation-progress-row__head {
+  justify-content: space-between;
+}
+
+.validation-progress-track {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--bg-canvas) 75%, var(--bg-elevated));
+}
+
+.validation-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.validation-progress-bar--running {
+  background: var(--accent-copper);
+  animation: validation-progress 1.2s ease-in-out infinite alternate;
+}
+
+.validation-progress-bar--done {
+  background: var(--status-running);
+}
+
+.validation-progress-bar--failed {
+  background: var(--status-error);
+}
+
 .diagnostic--warning {
   border-color: color-mix(in srgb, var(--status-warning) 50%, transparent);
 }
@@ -1129,13 +1571,13 @@ button {
      never grow past what ELK was told about in graph-builder.ts
      (SERVICE_NODE_WIDTH/SERVICE_NODE_HEIGHT) - every row below is either a
      single truncated line or explicitly capped, so 156px is always enough. */
-  width: 216px;
-  height: 156px;
+  width: 208px;
+  height: 140px;
   overflow: hidden;
   display: grid;
   grid-template-rows: auto auto 1fr auto;
-  gap: var(--space-2);
-  padding: var(--space-3);
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
@@ -1211,9 +1653,9 @@ button {
   width: 100%;
   height: 100%;
   padding: var(--space-3);
-  border: 1px dashed var(--border-strong);
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 80%, transparent);
   border-radius: var(--radius-lg);
-  background: transparent;
+  background: color-mix(in srgb, var(--bg-elevated) 18%, transparent);
   overflow: hidden;
 }
 
@@ -1230,7 +1672,7 @@ button {
 .external-node {
   /* Fixed size + overflow:hidden mirrors .manifest-node above; must stay in
      sync with COMPACT_NODE_WIDTH/COMPACT_NODE_HEIGHT in graph-builder.ts. */
-  width: 160px;
+  width: 152px;
   height: 72px;
   overflow: hidden;
   display: grid;
@@ -1385,8 +1827,12 @@ button {
   font-weight: 600;
 }
 
-.react-flow__controls-button,
-.react-flow__minimap {
+.react-flow__edge path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-flow__controls-button {
   background: var(--bg-elevated);
   color: var(--text-secondary);
   border-color: var(--border-subtle);
@@ -1398,10 +1844,6 @@ button {
 
 .react-flow__attribution {
   display: none;
-}
-
-.graph-minimap {
-  background: var(--bg-elevated);
 }
 
 .metadata-row {
@@ -1455,6 +1897,16 @@ button {
   }
 }
 
+@keyframes validation-progress {
+  from {
+    opacity: 0.55;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -1483,6 +1935,10 @@ button {
   .detail-panel {
     width: 100%;
   }
+
+  .workspace-panel--toolbar {
+    max-width: min(760px, calc(100vw - 32px));
+  }
 }
 
 @media (max-width: 820px) {
@@ -1500,5 +1956,26 @@ button {
 
   .project-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-panel--project,
+  .workspace-panel--toolbar,
+  .floating-panel--validate,
+  .floating-panel--operation,
+  .detail-panel--overlay {
+    max-width: calc(100vw - 32px);
+  }
+
+  .workspace-panel--toolbar {
+    gap: var(--space-2);
+  }
+
+  .workspace-toolbar__divider {
+    display: none;
+  }
+
+  .search-input--workspace {
+    width: min(100%, 240px);
+    flex-basis: min(100%, 240px);
   }
 }

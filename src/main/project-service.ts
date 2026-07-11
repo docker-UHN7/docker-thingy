@@ -1,5 +1,7 @@
 import { dialog } from "electron";
 import { randomUUID } from "node:crypto";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { watch, type FSWatcher } from "node:fs";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import { join, dirname, basename, extname } from "node:path";
 import type {
@@ -31,6 +33,7 @@ import { isValidContainerRef, normalizeLogTail, sanitizeSettingsPatch } from "./
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
+  "start",
   "apply-start",
   "stop",
   "build-image"
@@ -90,7 +93,7 @@ export function mergeProjectLists(
   return [...mergedSourceProjects, ...remainingRuntimeProjects];
 }
 
-export interface ComposeProjectGroup {
+interface ComposeProjectGroup {
   mainFile: string;
   relatedFiles: string[];
   allConfigFiles: string[];
@@ -121,10 +124,10 @@ export async function scanDirectoryForComposeProjects(directoryPath: string): Pr
     for (const file of files) {
       const ext = extname(file);
       const baseName = basename(file, ext);
-      
+
       const dotIndex = baseName.indexOf(".");
       const parentBase = dotIndex === -1 ? baseName : baseName.slice(0, dotIndex);
-      
+
       let list = groupsMap.get(parentBase);
       if (!list) {
         list = [];
@@ -222,7 +225,6 @@ export function applyProjectGrouping(directoryPath: string, projects: ProjectSum
 
 const DEFAULT_SETTINGS: AppSettings = {
   themeMode: "dark",
-  runtimeRefreshSeconds: 3,
   statsPollSeconds: 3,
   logTailLines: 200
 };
@@ -230,7 +232,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export class ProjectService {
   // Every public method below reads `this.snapshot`, awaits I/O, then writes
   // a new snapshot back. Without serializing those read-await-write spans,
-  // two concurrent calls (e.g. refreshRuntime racing an openSourcePath) could
+  // two concurrent calls (e.g. runtime sync racing an openSourcePath) could
   // interleave, and whichever resolves last would silently clobber the
   // other's update. withLock chains mutating operations onto a single
   // promise so they always run to completion one at a time, in call order.
@@ -249,10 +251,18 @@ export class ProjectService {
   // (validate/apply-start/stop/build-image) in flight, keyed by project id.
   // Deliberately NOT folded into `lock`: that lock only guards short
   // read-await-write snapshot spans, whereas a build can run for minutes and
-  // must not block unrelated snapshot reads/writes (e.g. refreshing a
+  // must not block unrelated snapshot reads/writes (e.g. synchronizing a
   // different project) for that whole time. This map is the concurrency
   // guard for "don't start a second operation on the same project".
   private activeOperations = new Map<string, ExecutableProjectActionId>();
+  private snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
+  private sourceWatchers = new Map<string, FSWatcher>();
+  private sourceReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private runtimeSyncTimer: ReturnType<typeof setTimeout> | undefined;
+  private dockerEventRestartTimer: ReturnType<typeof setTimeout> | undefined;
+  private dockerEventBuffer = "";
+  private dockerEventProcess: ChildProcessWithoutNullStreams | undefined;
+  private disposed = false;
 
   private snapshot: AppSnapshot = {
     dockerStatus: {
@@ -267,11 +277,233 @@ export class ProjectService {
     settings: DEFAULT_SETTINGS
   };
 
+  subscribeSnapshots(listener: (snapshot: AppSnapshot) => void): () => void {
+    this.snapshotListeners.add(listener);
+    return () => {
+      this.snapshotListeners.delete(listener);
+    };
+  }
+
+  startAutoSync(): void {
+    this.reconcileSourceWatchers();
+    this.ensureDockerEventStream();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    if (this.runtimeSyncTimer) {
+      clearTimeout(this.runtimeSyncTimer);
+      this.runtimeSyncTimer = undefined;
+    }
+    if (this.dockerEventRestartTimer) {
+      clearTimeout(this.dockerEventRestartTimer);
+      this.dockerEventRestartTimer = undefined;
+    }
+    if (this.dockerEventProcess && !this.dockerEventProcess.killed) {
+      this.dockerEventProcess.kill();
+    }
+    this.dockerEventProcess = undefined;
+    for (const timer of this.sourceReloadTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.sourceReloadTimers.clear();
+    for (const watcher of this.sourceWatchers.values()) {
+      watcher.close();
+    }
+    this.sourceWatchers.clear();
+  }
+
+  private emitSnapshot(): void {
+    this.reconcileSourceWatchers();
+    for (const listener of this.snapshotListeners) {
+      listener(this.snapshot);
+    }
+  }
+
+  private scheduleRuntimeSync(delayMs = 180): void {
+    if (this.runtimeSyncTimer) {
+      clearTimeout(this.runtimeSyncTimer);
+    }
+
+    this.runtimeSyncTimer = setTimeout(() => {
+      this.runtimeSyncTimer = undefined;
+      void this.synchronizeSnapshot();
+    }, delayMs);
+  }
+
+  private ensureDockerEventStream(): void {
+    if (this.disposed || this.dockerEventProcess) {
+      return;
+    }
+
+    const child = spawn("docker", ["events", "--format", "{{json .}}"], {
+      windowsHide: true
+    });
+    this.dockerEventProcess = child;
+    this.dockerEventBuffer = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      this.dockerEventBuffer += chunk.toString("utf8");
+      const lines = this.dockerEventBuffer.split(/\r?\n/);
+      this.dockerEventBuffer = lines.pop() ?? "";
+      if (lines.some((line) => line.trim().length > 0)) {
+        this.scheduleRuntimeSync();
+      }
+    });
+
+    child.on("error", () => {
+      this.dockerEventProcess = undefined;
+      this.scheduleDockerEventRestart();
+    });
+
+    child.on("close", () => {
+      this.dockerEventProcess = undefined;
+      this.scheduleDockerEventRestart();
+    });
+  }
+
+  private scheduleDockerEventRestart(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    if (this.dockerEventRestartTimer) {
+      clearTimeout(this.dockerEventRestartTimer);
+    }
+
+    this.dockerEventRestartTimer = setTimeout(() => {
+      this.dockerEventRestartTimer = undefined;
+      this.ensureDockerEventStream();
+    }, 3_000);
+  }
+
+  // Watches every active config file (not just each project's primary/anchor
+  // file) so external edits to a checked-on override file trigger a live
+  // reload too, not only edits to the base file.
+  private reconcileSourceWatchers(): void {
+    const watchedPaths = new Set(
+      this.snapshot.projects
+        .filter((project) => project.access !== "runtime-only")
+        .flatMap((project) => (project.configFiles.length > 0 ? project.configFiles : project.sourcePath ? [project.sourcePath] : []))
+    );
+
+    for (const [sourcePath, watcher] of this.sourceWatchers) {
+      if (watchedPaths.has(sourcePath)) {
+        continue;
+      }
+      watcher.close();
+      this.sourceWatchers.delete(sourcePath);
+    }
+
+    for (const sourcePath of watchedPaths) {
+      if (this.sourceWatchers.has(sourcePath)) {
+        continue;
+      }
+
+      try {
+        const watcher = watch(sourcePath, { persistent: false }, () => {
+          this.scheduleSourceReload(sourcePath);
+        });
+        watcher.on("error", () => {
+          watcher.close();
+          this.sourceWatchers.delete(sourcePath);
+        });
+        this.sourceWatchers.set(sourcePath, watcher);
+      } catch {
+        // Ignore watch failures for paths that momentarily disappear.
+      }
+    }
+  }
+
+  private scheduleSourceReload(changedPath: string): void {
+    const existing = this.sourceReloadTimers.get(changedPath);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.sourceReloadTimers.delete(changedPath);
+      void this.reloadProjectsWatchingPath(changedPath);
+    }, 180);
+
+    this.sourceReloadTimers.set(changedPath, timer);
+  }
+
+  // A changed file can be the anchor of one project or an override shared by
+  // several (grouped siblings, or - rarely - two unrelated projects pointing
+  // at the same override) - reload every project whose active configFiles
+  // include it, not just the one whose sourcePath matches literally.
+  private async reloadProjectsWatchingPath(changedPath: string): Promise<void> {
+    const affectedProjects = this.snapshot.projects.filter(
+      (project) => project.access !== "runtime-only" && project.configFiles.includes(changedPath)
+    );
+
+    for (const project of affectedProjects) {
+      await this.reloadSourceProject(project, changedPath);
+    }
+  }
+
+  private async reloadSourceProject(project: ProjectSummary, changedPath: string): Promise<void> {
+    try {
+      const mainPath = project.sourcePath ?? project.configFiles[0];
+      if (!mainPath) {
+        return;
+      }
+
+      await access(mainPath);
+      const isDockerfile = project.runtimeKind === "dockerfile";
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const reloaded = isDockerfile
+        ? await loadDockerfileProject(mainPath, contextName)
+        : await loadComposeProject(mainPath, contextName, project.configFiles);
+
+      if (project.allConfigFiles) {
+        reloaded.allConfigFiles = project.allConfigFiles;
+      }
+      if (project.groupId) {
+        reloaded.groupId = project.groupId;
+        reloaded.groupLabel = project.groupLabel;
+      }
+
+      const sourceText = await readFile(mainPath, "utf8");
+
+      await this.withLock(async () => {
+        const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+        const sourceProjects = this.snapshot.projects.filter(
+          (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+        );
+        const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+        this.snapshot = {
+          ...this.snapshot,
+          projects: mergedProjects,
+          activeProjectId:
+            this.snapshot.activeProjectId && mergedProjects.some((entry) => entry.id === this.snapshot.activeProjectId)
+              ? this.snapshot.activeProjectId
+              : mergedProjects[0]?.id,
+          activeSourceSession:
+            this.snapshot.activeSourceSession?.sourcePath === changedPath
+              ? {
+                  ...this.snapshot.activeSourceSession,
+                  revision: this.snapshot.activeSourceSession.revision + 1,
+                  lastKnownHash: hashSource(sourceText),
+                  diffPreview: "Updated from disk"
+                }
+              : this.snapshot.activeSourceSession
+        };
+      });
+
+      this.emitSnapshot();
+    } catch {
+      // Ignore transient source reload errors and keep the last known snapshot.
+    }
+  }
+
   async getSnapshot(): Promise<AppSnapshot> {
     return this.snapshot;
   }
 
-  async refreshRuntime(): Promise<AppSnapshot> {
+  async synchronizeSnapshot(): Promise<AppSnapshot> {
     return this.withLock(async () => {
       try {
         const dockerStatus = await detectDockerStatus();
@@ -281,7 +513,7 @@ export class ProjectService {
         // Dedupe: a project opened from source and its runtime-discovered twin
         // (same resolved Compose file) are merged into one card here rather
         // than shown side by side - see mergeProjectLists for why that matters
-        // for keeping the active selection stable across refreshes.
+        // for keeping the active selection stable across live syncs.
         const projects = mergeProjectLists(contextName, sourceProjects, runtimeProjects);
         // Only remember paths we've actually confirmed exist/loaded (a source
         // project's own sourcePath, or a runtime project's sourcePath once
@@ -310,6 +542,7 @@ export class ProjectService {
               : projects[0]?.id
         };
 
+        this.emitSnapshot();
         return this.snapshot;
       } catch {
         this.snapshot = {
@@ -320,50 +553,46 @@ export class ProjectService {
             composeAvailable: false,
             buildxAvailable: false,
             contextName: this.snapshot.dockerStatus.contextName,
-            message: "Docker status could not be refreshed right now.",
+            message: "Docker status could not be synchronized right now.",
             checkedAt: new Date().toISOString()
           },
           projects: this.snapshot.projects.filter((project) => project.access !== "runtime-only"),
           activeProjectId: this.snapshot.activeProjectId
         };
 
+        this.emitSnapshot();
         return this.snapshot;
       }
     });
   }
 
-  private async loadProjectFromPath(sourcePath: string, configFiles?: string[]): Promise<ProjectSummary> {
+  private async loadProjectFromPath(sourcePath: string): Promise<ProjectSummary> {
     const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
     return /(^|[\\/])dockerfile$/i.test(sourcePath)
       ? loadDockerfileProject(sourcePath, contextName)
-      : loadComposeProject(sourcePath, contextName, configFiles);
+      : loadComposeProject(sourcePath, contextName);
   }
 
   private async commitOpenedProjects(
-    sourcePath: string | undefined,
-    mainProject: ProjectSummary | undefined,
-    allProjects: ProjectSummary[]
+    sourcePath: string,
+    mainProject: ProjectSummary,
+    newProjects: ProjectSummary[]
   ): Promise<OpenSourceResult> {
-    // Explicit guard to ensure these are defined strings/objects
-    if (!mainProject || !sourcePath) {
-      return {
-        ok: false,
-        error: { code: "VALIDATION_FAILED", message: "Failed to load project." }
-      };
-    }
-
-    const isDockerfile = mainProject.runtimeKind === "dockerfile";
-    const sourceText = isDockerfile ? "" : await readFile(sourcePath, "utf8");
+    const sourceText = await readFile(sourcePath, "utf8");
+    const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+    const newProjectIds = new Set(newProjects.map((entry) => entry.id));
+    const otherSourceProjects = this.snapshot.projects.filter(
+      (entry) => entry.access !== "runtime-only" && !newProjectIds.has(entry.id)
+    );
+    const mergedProjects = mergeProjectLists(mainProject.contextName, [...newProjects, ...otherSourceProjects], runtimeProjects);
+    const mergedMainProject = mergedProjects.find((entry) => entry.id === mainProject.id) ?? mainProject;
 
     this.snapshot = {
       ...this.snapshot,
-      projects: [
-        ...allProjects,
-        ...this.snapshot.projects.filter((entry) => !allProjects.some((p) => p.id === entry.id))
-      ],
+      projects: mergedProjects,
       recents: [sourcePath, ...this.snapshot.recents.filter((entry) => entry !== sourcePath)].slice(0, 12),
       activeProjectId: mainProject.id,
-      activeSourceSession: isDockerfile ? undefined : {
+      activeSourceSession: {
         id: mainProject.id,
         sourcePath,
         revision: 1,
@@ -371,10 +600,11 @@ export class ProjectService {
         diffPreview: "No pending changes"
       }
     };
+    this.emitSnapshot();
 
     return {
       ok: true,
-      data: mainProject
+      data: mergedMainProject
     };
   }
 
@@ -394,64 +624,66 @@ export class ProjectService {
       };
     }
 
-    const groups = await scanDirectoryForComposeProjects(directoryPath);
-    const dockerfilePath = join(directoryPath, "Dockerfile");
-    let hasDockerfile = false;
-    try {
-      await access(dockerfilePath);
-      hasDockerfile = true;
-    } catch {}
-
-    if (groups.length === 0 && !hasDockerfile) {
-      return {
-        ok: false,
-        error: {
-          code: "VALIDATION_FAILED",
-          message: "No docker-compose.yml, compose.yaml, or Dockerfile was found in the selected folder."
-        }
-      };
-    }
-
-    const loadedProjects: ProjectSummary[] = [];
-    const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
-
-    for (const group of groups) {
+    return this.withLock(async () => {
+      const groups = await scanDirectoryForComposeProjects(directoryPath);
+      const dockerfilePath = join(directoryPath, "Dockerfile");
+      let hasDockerfile = false;
       try {
-        const project = await loadComposeProject(group.mainFile, contextName, group.defaultSelected);
-        project.allConfigFiles = group.allConfigFiles;
-        loadedProjects.push(project);
-      } catch (e) {
-        // Ignore single load errors
-      }
-    }
-
-    if (hasDockerfile) {
-      try {
-        const project = await loadDockerfileProject(dockerfilePath, contextName);
-        loadedProjects.push(project);
+        await access(dockerfilePath);
+        hasDockerfile = true;
       } catch {}
-    }
 
-    if (loadedProjects.length === 0) {
-      return {
-        ok: false,
-        error: {
-          code: "VALIDATION_FAILED",
-          message: "Could not successfully parse any projects in the selected folder."
+      if (groups.length === 0 && !hasDockerfile) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "No docker-compose.yml, compose.yaml, or Dockerfile was found in the selected folder."
+          }
+        };
+      }
+
+      const loadedProjects: ProjectSummary[] = [];
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+
+      for (const group of groups) {
+        try {
+          const project = await loadComposeProject(group.mainFile, contextName, group.defaultSelected);
+          project.allConfigFiles = group.allConfigFiles;
+          loadedProjects.push(project);
+        } catch {
+          // Ignore single load errors
         }
-      };
-    }
+      }
 
-    const groupedProjects = applyProjectGrouping(directoryPath, loadedProjects);
-    const mainProject = groupedProjects[0];
-    if (!mainProject) {
-      return {
-        ok: false,
-        error: { code: "VALIDATION_FAILED", message: "Could not successfully parse any projects in the selected folder." }
-      };
-    }
+      if (hasDockerfile) {
+        try {
+          const project = await loadDockerfileProject(dockerfilePath, contextName);
+          loadedProjects.push(project);
+        } catch {}
+      }
 
-    return this.commitOpenedProjects(mainProject.sourcePath || mainProject.configFiles[0] || dockerfilePath, mainProject, groupedProjects);
+      if (loadedProjects.length === 0) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Could not successfully parse any projects in the selected folder."
+          }
+        };
+      }
+
+      const groupedProjects = applyProjectGrouping(directoryPath, loadedProjects);
+      const mainProject = groupedProjects[0];
+      if (!mainProject) {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: "Could not successfully parse any projects in the selected folder." }
+        };
+      }
+
+      return this.commitOpenedProjects(mainProject.sourcePath || mainProject.configFiles[0] || dockerfilePath, mainProject, groupedProjects);
+    });
   }
 
   async openSourcePath(sourcePath: string): Promise<OpenSourceResult> {
@@ -489,7 +721,7 @@ export class ProjectService {
         const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
         const mainFile = matchingGroup.mainFile || sourcePath;
         const loadedProject = await loadComposeProject(mainFile, contextName, activeFiles);
-        
+
         loadedProject.allConfigFiles = matchingGroup.allConfigFiles ?? [mainFile];
 
         const otherLoadedProjects: ProjectSummary[] = [];
@@ -556,6 +788,7 @@ export class ProjectService {
           p.id === projectId ? updatedProject : p
         )
       };
+      this.emitSnapshot();
 
       return this.snapshot;
     });
@@ -614,7 +847,7 @@ export class ProjectService {
    * resolves the project purely from the id (the renderer never sends a raw
    * path or command fragment), refuses to double-run on the same project,
    * streams progress via `onEvent`, then folds the outcome into the snapshot
-   * and - for anything that can change container state - refreshes runtime
+   * and - for anything that can change container state - synchronizes runtime
    * so the graph reflects it.
    */
   async runProjectAction(
@@ -637,7 +870,7 @@ export class ProjectService {
     if (!project) {
       return {
         ok: false,
-        error: { code: "VALIDATION_FAILED", message: "That project is no longer available. Refresh and try again." }
+        error: { code: "VALIDATION_FAILED", message: "That project is no longer available. Reopen it and try again." }
       };
     }
 
@@ -666,11 +899,11 @@ export class ProjectService {
         onEvent({ kind: "output", projectId, operationId, actionId, stream, line });
       });
 
-      let snapshot = await this.finalizeOperation(projectId, outcome);
+      let snapshot = await this.finalizeOperation(projectId, actionId, outcome);
       if (actionId !== "validate") {
         // Container state changed (or was attempted to change) - pull fresh
         // runtime data so the graph/status dots reflect it immediately.
-        snapshot = await this.refreshRuntime();
+        snapshot = await this.synchronizeSnapshot();
       }
 
       onEvent({
@@ -708,7 +941,11 @@ export class ProjectService {
     }
   }
 
-  private async finalizeOperation(projectId: string, outcome: ValidationOutcome): Promise<AppSnapshot> {
+  private async finalizeOperation(
+    projectId: string,
+    actionId: ExecutableProjectActionId,
+    outcome: ValidationOutcome
+  ): Promise<AppSnapshot> {
     return this.withLock(async () => {
       const diagnostic: ProjectDiagnostics = {
         level: outcome.ok ? "info" : "error",
@@ -724,11 +961,16 @@ export class ProjectService {
                 ...project,
                 // Replace any previous diagnostic with the same title instead
                 // of letting repeated clicks pile up duplicate entries.
-                diagnostics: [diagnostic, ...project.diagnostics.filter((entry) => entry.title !== diagnostic.title)]
+                diagnostics: [diagnostic, ...project.diagnostics.filter((entry) => entry.title !== diagnostic.title)],
+                buildStatus:
+                  outcome.ok && (actionId === "validate" || actionId === "build-image" || actionId === "apply-start")
+                    ? "built"
+                    : project.buildStatus
               }
             : project
         )
       };
+      this.emitSnapshot();
 
       return this.snapshot;
     });
@@ -743,6 +985,7 @@ export class ProjectService {
           ...sanitizeSettingsPatch(settings)
         }
       };
+      this.emitSnapshot();
 
       return this.snapshot;
     });
@@ -754,6 +997,7 @@ export class ProjectService {
         ...this.snapshot,
         recents: []
       };
+      this.emitSnapshot();
 
       return this.snapshot;
     });

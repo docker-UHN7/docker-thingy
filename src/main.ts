@@ -73,11 +73,16 @@ app.whenReady().then(async () => {
   const mainWindow = createMainWindow();
   const projectService = new ProjectService();
   registerIpc(mainWindow, projectService);
+  projectService.startAutoSync();
   try {
-    await projectService.refreshRuntime();
+    await projectService.synchronizeSnapshot();
   } catch {
     // Keep the shell running even if Docker is unavailable during startup.
   }
+
+  app.on("before-quit", () => {
+    projectService.dispose();
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

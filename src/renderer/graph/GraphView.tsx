@@ -1,6 +1,6 @@
 import { Background, BackgroundVariant, Controls, ReactFlow, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import type { ProjectSummary } from "../../shared/contracts";
 import { buildGraph, layoutGraph } from "./graph-builder";
@@ -18,7 +18,7 @@ type GraphViewProps = {
   filterQuery: string;
   selectedNodeId: string | undefined;
   layoutDirection: "RIGHT" | "DOWN";
-  fitNonce: number;
+  children?: ReactNode;
   onSelectNode(nodeId: string): void;
   onClearSelection(): void;
 };
@@ -52,7 +52,7 @@ export function GraphView({
   filterQuery,
   selectedNodeId,
   layoutDirection,
-  fitNonce,
+  children,
   onSelectNode,
   onClearSelection
 }: GraphViewProps) {
@@ -105,11 +105,6 @@ export function GraphView({
       cancelled = true;
     };
   }, [project, layoutDirection, scheduleFitView]);
-
-  useEffect(() => {
-    scheduleFitView();
-  }, [fitNonce, scheduleFitView]);
-
   const related = useMemo(() => relatedNodes(project, selectedNodeId), [project, selectedNodeId]);
 
   const nodes = useMemo<Node[]>(() => {
@@ -176,6 +171,8 @@ export function GraphView({
         edges={edges}
         nodeTypes={nodeTypes}
         fitView={false}
+        minZoom={0.2}
+        maxZoom={1.6}
         proOptions={{ hideAttribution: true }}
         nodesDraggable={false}
         onPaneClick={() => onClearSelection()}
@@ -189,7 +186,8 @@ export function GraphView({
           scheduleFitView();
         }}
       >
-        <Controls showInteractive={false} />
+        {children}
+        <Controls showInteractive={false} showFitView fitViewOptions={{ padding: 0.18, duration: 220 }} />
         <Background variant={BackgroundVariant.Dots} color="var(--border-subtle)" gap={20} size={1} />
       </ReactFlow>
     </div>

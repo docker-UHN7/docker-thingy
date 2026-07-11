@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { Document } from "yaml";
 import type {
@@ -337,6 +338,23 @@ function buildRelationshipEdges(services: ServiceNodeModel[]): RelationshipEdge[
   return output;
 }
 
+// declaredName comes from whichever active file last declared a `name:`
+// directive - later files win, same as every other merge rule here, so a
+// `name:` in an override file takes effect just like it would in real
+// `docker compose -f a -f b`.
+function deriveComposeProjectTitle(declaredName: string | undefined, sourcePath: string): string {
+  if (declaredName && declaredName.trim() !== "") {
+    return declaredName.trim();
+  }
+
+  const parentDirectory = basename(dirname(sourcePath));
+  if (parentDirectory.trim() !== "") {
+    return parentDirectory;
+  }
+
+  return sourcePath.split(/[/\\]/).at(-1) ?? sourcePath;
+}
+
 function toServiceModels(document: Document): ServiceNodeModel[] {
   const servicesNode = document.get("services", true);
   if (!isMap(servicesNode)) {
@@ -490,6 +508,7 @@ export async function loadComposeProject(
   const activeFiles = configFiles && configFiles.length > 0 ? configFiles : [sourcePath];
   let mergedServices: ServiceNodeModel[] = [];
   const diagnostics: ProjectDiagnostics[] = [];
+  let declaredName: string | undefined;
 
   for (const filePath of activeFiles) {
     try {
@@ -500,6 +519,11 @@ export async function loadComposeProject(
 
       const services = toServiceModels(document);
       mergedServices = mergeComposeServices(mergedServices, services);
+
+      const fileDeclaredName = document.get("name");
+      if (typeof fileDeclaredName === "string" && fileDeclaredName.trim() !== "") {
+        declaredName = fileDeclaredName.trim();
+      }
 
       for (const service of services) {
         if (service.sourceHints?.buildContext) {
@@ -521,24 +545,30 @@ export async function loadComposeProject(
       index === self.findIndex((d) => d.title === diag.title && d.message === diag.message)
   );
 
+  const projectTitle = deriveComposeProjectTitle(declaredName, sourcePath);
+
   return {
     id: `source-compose:${contextName}:${sourcePath}`,
-    title: sourcePath.split(/[/\\]/).at(-1) ?? sourcePath,
+    title: projectTitle,
     subtitle: activeFiles.length > 1
       ? `Merged Compose source (${activeFiles.length} files)`
       : "Explicitly opened Compose source",
     runtimeKind: "compose",
     access: "editable",
     contextName,
+    composeProjectName: projectTitle,
     sourcePath,
     configFiles: activeFiles,
     services: mergedServices,
     diagnostics: uniqueDiagnostics,
     actions: [
       { id: "validate", label: "Validate", emphasis: "primary" },
+      { id: "build-image", label: "Build" },
+      { id: "start", label: "Start" },
       { id: "apply-start", label: "Apply & Start", confirmation: "Apply changes and start this Compose project?" },
       { id: "stop", label: "Stop", emphasis: "danger", confirmation: "Stop containers for this project?" }
     ],
+    buildStatus: "not-built",
     lastUpdatedLabel: "Opened from source",
     lastCheckedAt: new Date().toISOString(),
     externalNodes: inferExternalNodes(mergedServices),

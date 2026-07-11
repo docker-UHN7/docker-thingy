@@ -42,7 +42,6 @@ describe("theme updates", () => {
       activeProjectId: undefined,
       settings: {
         themeMode: "dark",
-        runtimeRefreshSeconds: 3,
         statsPollSeconds: 3,
         logTailLines: 200
       }
@@ -83,7 +82,6 @@ describe("theme updates", () => {
         activeProjectId: undefined,
         settings: {
           themeMode: "system",
-          runtimeRefreshSeconds: 3,
           statsPollSeconds: 3,
           logTailLines: 200
         }

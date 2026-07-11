@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
-import type { AppSnapshot, OpenSourceResult, ProjectActionResult, RefreshRuntimeResult } from "../shared/contracts";
+import type { AppSnapshot, OpenSourceResult, ProjectActionResult } from "../shared/contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { ProjectService } from "./project-service";
 
@@ -20,21 +20,18 @@ function isTrustedSender(mainWindow: BrowserWindow, event: IpcMainInvokeEvent): 
 }
 
 export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectService): void {
+  projectService.subscribeSnapshots((snapshot) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.SNAPSHOT_EVENT, snapshot);
+    }
+  });
+
   ipcMain.handle(IPC_CHANNELS.GET_SNAPSHOT, async (event): Promise<AppSnapshot> => {
     if (!isTrustedSender(mainWindow, event)) {
       throw new Error("Untrusted sender");
     }
 
     return projectService.getSnapshot();
-  });
-
-  ipcMain.handle(IPC_CHANNELS.REFRESH_RUNTIME, async (event): Promise<RefreshRuntimeResult> => {
-    if (!isTrustedSender(mainWindow, event)) {
-      throw new Error("Untrusted sender");
-    }
-
-    const snapshot = await projectService.refreshRuntime();
-    return { ok: true, data: snapshot };
   });
 
   ipcMain.handle(IPC_CHANNELS.OPEN_SOURCE, async (event): Promise<OpenSourceResult> => {

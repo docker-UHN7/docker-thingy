@@ -1,8 +1,9 @@
-import { FolderPlus, FolderTree, LoaderCircle, MoonStar, RefreshCw, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
+import { FolderPlus, FolderTree, LoaderCircle, MoonStar, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState, type DragEvent } from "react";
 import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contracts";
 import { useAppStore } from "./store";
 import { ConfigurationPanel } from "./ConfigurationPanel";
+import { deriveProjectLifecycle } from "./project-state";
 
 type SidebarProps = {
   projects: ProjectSummary[];
@@ -12,7 +13,6 @@ type SidebarProps = {
   error: string | undefined;
   theme: "dark" | "light";
   onSelect(projectId: string): void;
-  onRefresh(): void;
   onOpenSource(): void;
   onOpenSourcePath(sourcePath: string): void;
   onOpenRecent(sourcePath: string): void;
@@ -28,17 +28,6 @@ function middleTruncate(value: string, head = 20, tail = 16): string {
   }
 
   return `${value.slice(0, head)}...${value.slice(-tail)}`;
-}
-
-function projectState(project: ProjectSummary): "running" | "stopped" | "warning" {
-  const hasRunning = project.services.some((service) => service.status === "running");
-  const hasStopped = project.services.some((service) => service.status !== "running");
-
-  if (hasRunning && hasStopped) {
-    return "warning";
-  }
-
-  return hasRunning ? "running" : "stopped";
 }
 
 function isAcceptedSource(path: string): boolean {
@@ -58,6 +47,8 @@ type ProjectCardProps = {
 function ProjectCard({ project, activeProjectId, dockerStatus, staleHint, onSelect }: ProjectCardProps) {
   const location = project.sourcePath ?? project.configFiles[0] ?? "Runtime-only";
   const stale = !dockerStatus?.daemonAvailable;
+  const lifecycle = deriveProjectLifecycle(project);
+  const statusClass = lifecycle.state === "running" ? "running" : lifecycle.state === "crashed" ? "error" : "stopped";
 
   return (
     <button
@@ -68,9 +59,9 @@ function ProjectCard({ project, activeProjectId, dockerStatus, staleHint, onSele
       <div className="project-card__head">
         <div className="project-card__title">
           <span
-            className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? projectState(project) : "stopped"} ${
+            className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? statusClass : "stopped"} ${
               dockerStatus?.daemonAvailable ? "" : "status-dot--stale"
-            } ${dockerStatus?.daemonAvailable && projectState(project) === "running" ? "pulse" : ""}`}
+            } ${dockerStatus?.daemonAvailable && lifecycle.state === "running" ? "pulse" : ""}`}
           />
           <span>{project.title}</span>
         </div>
@@ -87,7 +78,7 @@ function ProjectCard({ project, activeProjectId, dockerStatus, staleHint, onSele
         <span className="manifest-tag">{project.services.length} services</span>
         <span className="manifest-tag">{project.runtimeKind}</span>
         <span className="manifest-tag" title={stale ? staleHint : "Docker was reachable when this project was last checked."}>
-          {dockerStatus?.daemonAvailable ? "reachable" : "stale"}
+          {stale ? "stale" : lifecycle.hasRuntimeMatch ? "runtime linked" : "source only"}
         </span>
       </div>
 
@@ -130,6 +121,8 @@ function ProjectGroupCard({ groupLabel, projects, activeProjectId, dockerStatus,
       <div className="project-group__members">
         {projects.map((project) => {
           const location = project.sourcePath ?? project.configFiles[0] ?? "Runtime-only";
+          const lifecycle = deriveProjectLifecycle(project);
+          const statusClass = lifecycle.state === "running" ? "running" : lifecycle.state === "crashed" ? "error" : "stopped";
           return (
             <button
               key={project.id}
@@ -138,9 +131,9 @@ function ProjectGroupCard({ groupLabel, projects, activeProjectId, dockerStatus,
               title={stale ? staleHint : location}
             >
               <span
-                className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? projectState(project) : "stopped"} ${
+                className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? statusClass : "stopped"} ${
                   dockerStatus?.daemonAvailable ? "" : "status-dot--stale"
-                }`}
+                } ${dockerStatus?.daemonAvailable && lifecycle.state === "running" ? "pulse" : ""}`}
               />
               <span className="project-group__member-title">{project.title}</span>
               <span className="metadata-note">{project.services.length} svc</span>
@@ -199,7 +192,6 @@ export function Sidebar({
   error,
   theme,
   onSelect,
-  onRefresh,
   onOpenSource,
   onOpenSourcePath,
   onOpenRecent,
@@ -285,9 +277,6 @@ export function Sidebar({
             <span>Docker daemon not detected. Start Docker to see live container status.</span>
           </div>
           <div className="daemon-banner__actions">
-            <button className="icon-button" onClick={onRefresh} aria-label="Retry runtime discovery">
-              <RefreshCw size={16} className={loading ? "busy" : undefined} />
-            </button>
             <button className="icon-button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss banner">
               <X size={16} />
             </button>
@@ -316,12 +305,7 @@ export function Sidebar({
           </label>
 
           <div className="launcher-meta">
-            {loading ? <span className="toolbar-note">Refreshing runtime...</span> : null}
-            {settings?.runtimeRefreshSeconds ? (
-              <span className="toolbar-note">Refresh every {settings.runtimeRefreshSeconds}s</span>
-            ) : (
-              <span className="toolbar-note">Manual refresh only</span>
-            )}
+            <span className="toolbar-note">{loading ? "Syncing Docker runtime..." : "Watching Docker runtime"}</span>
           </div>
         </div>
 

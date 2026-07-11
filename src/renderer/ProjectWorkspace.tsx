@@ -9,32 +9,31 @@ import {
   LoaderCircle,
   MoonStar,
   Plus,
-  RefreshCw,
   ScanSearch,
   Settings,
-  Shrink,
   SunMedium,
   TriangleAlert,
   X
 } from "lucide-react";
+import { Panel } from "@xyflow/react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import type {
   AppSettings,
   DockerStatus,
   ExecutableProjectActionId,
   LogSnapshotResult,
-  ProjectAction,
   ProjectSummary,
   ServiceNodeModel,
   StatsSnapshotResult
 } from "../shared/contracts";
-import { useAppStore } from "./store";
-import { GraphView } from "./graph/GraphView";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 import { Inspector } from "./Inspector";
 import { LogsPanel } from "./LogsPanel";
-import { OperationPanel } from "./OperationPanel";
-import { ValidationPanel } from "./ValidationPanel";
+import { OperationProgressPanel } from "./OperationProgressPanel";
+import { ProjectActionToolbar } from "./ProjectActionToolbar";
+import { GraphView } from "./graph/GraphView";
+import { deriveProjectLifecycle } from "./project-state";
+import { useAppStore } from "./store";
 
 type ProjectWorkspaceProps = {
   project: ProjectSummary | undefined;
@@ -45,7 +44,6 @@ type ProjectWorkspaceProps = {
   loading: boolean;
   error: string | undefined;
   onBack(): void;
-  onRefresh(): void;
   onToggleTheme(): void;
   onSelectProject(projectId: string): void;
 };
@@ -54,6 +52,7 @@ type DetailTab = "overview" | "env" | "mounts" | "logs";
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
+  "start",
   "apply-start",
   "stop",
   "build-image"
@@ -98,7 +97,6 @@ export function ProjectWorkspace({
   loading,
   error,
   onBack,
-  onRefresh,
   onToggleTheme,
   onSelectProject
 }: ProjectWorkspaceProps) {
@@ -107,8 +105,8 @@ export function ProjectWorkspace({
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
   const [layoutDirection, setLayoutDirection] = useState<"RIGHT" | "DOWN">("RIGHT");
-  const [fitNonce, setFitNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dismissedValidationOperationId, setDismissedValidationOperationId] = useState<string | undefined>();
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   // Toggling a compose-file checkbox round-trips through main (reload +
@@ -131,10 +129,6 @@ export function ProjectWorkspace({
   const operations = useAppStore((state) => state.operations);
   const operation = project ? operations[project.id] : undefined;
 
-  // Intentionally no fallback to project.services[0]: selectedNodeId === undefined
-  // means "nothing selected" and must stay that way so clearing the selection
-  // (Escape, clicking empty canvas, closing the panel) actually closes the panel
-  // instead of silently re-selecting the first service.
   const selectedService = useMemo(
     () => project?.services.find((service) => service.id === selectedNodeId),
     [project, selectedNodeId]
@@ -148,9 +142,6 @@ export function ProjectWorkspace({
     [project, projects]
   );
 
-  // If the active project changes out from under us (switched projects, or the
-  // previously selected service disappeared on refresh) drop a now-invalid
-  // selection instead of leaving a stale id around.
   useEffect(() => {
     if (selectedNodeId && !project?.services.some((service) => service.id === selectedNodeId)) {
       setSelectedNodeId(undefined);
@@ -163,6 +154,12 @@ export function ProjectWorkspace({
     setOptimisticConfigFiles(undefined);
     setSavingConfigFiles(false);
   }, [project?.id]);
+
+  useEffect(() => {
+    if (operation?.actionId === "validate" && operation.status === "running" && dismissedValidationOperationId) {
+      setDismissedValidationOperationId(undefined);
+    }
+  }, [operation?.actionId, operation?.status, operation?.operationId, operation?.startedAt, dismissedValidationOperationId]);
 
   async function applyConfigFilesChange(newFiles: string[]) {
     if (!project) {
@@ -241,16 +238,14 @@ export function ProjectWorkspace({
     if (detailTab !== "logs" || !containerId || !tail) {
       return;
     }
-    const containerIdSafe = containerId;
-    const tailSafe = tail;
+    const resolvedContainerId = containerId;
+    const resolvedTail = tail;
 
-    // Reset immediately so switching services/tabs never briefly shows the
-    // previous service's log lines while the fresh fetch is in flight.
     setLogsState(null);
     let cancelled = false;
 
     async function loadLogs() {
-      const result = await window.dockerExplorer.getServiceLogs(containerIdSafe, tailSafe);
+      const result = await window.dockerExplorer.getServiceLogs(resolvedContainerId, resolvedTail);
       if (!cancelled) {
         setLogsState(result);
       }
@@ -258,7 +253,7 @@ export function ProjectWorkspace({
 
     void loadLogs();
 
-    const intervalMs = settings.runtimeRefreshSeconds ? settings.runtimeRefreshSeconds * 1000 : null;
+    const intervalMs = settings?.statsPollSeconds ? settings.statsPollSeconds * 1000 : null;
     const intervalId = intervalMs ? window.setInterval(() => void loadLogs(), intervalMs) : undefined;
 
     return () => {
@@ -267,7 +262,7 @@ export function ProjectWorkspace({
         window.clearInterval(intervalId);
       }
     };
-  }, [detailTab, selectedService?.details?.containerId, settings?.logTailLines, settings?.runtimeRefreshSeconds]);
+  }, [detailTab, selectedService?.details?.containerId, settings?.logTailLines, settings?.statsPollSeconds]);
 
   useEffect(() => {
     const containerId = selectedService?.details?.containerId;
@@ -276,15 +271,13 @@ export function ProjectWorkspace({
       setStatsState(null);
       return;
     }
-    const containerIdSafe = containerId;
+    const resolvedContainerId = containerId;
 
-    // Reset immediately so switching between two running services never briefly
-    // shows the previous service's CPU/memory numbers while the fetch is in flight.
     setStatsState(null);
     let cancelled = false;
 
     async function loadStats() {
-      const result = await window.dockerExplorer.getServiceStats(containerIdSafe);
+      const result = await window.dockerExplorer.getServiceStats(resolvedContainerId);
       if (!cancelled) {
         setStatsState(result);
       }
@@ -301,22 +294,15 @@ export function ProjectWorkspace({
         window.clearInterval(intervalId);
       }
     };
-  }, [
-    detailTab,
-    selectedService?.details?.containerId,
-    selectedService?.details?.runtimeState.running,
-    settings?.statsPollSeconds
-  ]);
+  }, [detailTab, selectedService?.details?.containerId, selectedService?.details?.runtimeState.running, settings?.statsPollSeconds]);
 
   if (!project) {
     return (
       <main className="workspace-screen">
         <header className="topbar topbar--workspace">
-          <div className="toolbar-left">
-            <button className="icon-button" onClick={onBack} aria-label="Back to projects">
-              <ArrowLeft size={16} />
-            </button>
-            <h2 className="screen-title">Docker Graph</h2>
+          <div className="brand-lockup">
+            <div className="brand-mark">DG</div>
+            <h1 className="brand-title">Docker Graph</h1>
           </div>
           <div className="topbar__controls">
             <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
@@ -335,13 +321,9 @@ export function ProjectWorkspace({
             </h2>
             <p className="body-copy">
               {dockerStatus?.daemonAvailable
-                ? "Try Refresh runtime, start a container, or open an explicit Compose source."
+                ? "Start a container, or open an explicit Compose source."
                 : dockerStatus?.message ?? "No Docker runtime data is available yet."}
             </p>
-            <ul className="hero-steps">
-              <li>Start Docker Desktop (or your Docker daemon) so running containers can be discovered automatically.</li>
-              <li>Or go back and open a docker-compose.yml, compose.yaml, or Dockerfile directly.</li>
-            </ul>
             <button className="button button--primary" onClick={onBack}>
               <ArrowLeft size={16} />
               <span>Back to projects</span>
@@ -352,97 +334,51 @@ export function ProjectWorkspace({
     );
   }
 
-  function handleAction(action: ProjectAction) {
-    if (action.confirmation && !window.confirm(action.confirmation)) {
+  function handleAction(actionId: ExecutableProjectActionId) {
+    if (!project || !isExecutableActionId(actionId)) {
       return;
     }
 
-    if (action.id === "refresh") {
-      onRefresh();
+    const confirmation =
+      actionId === "stop"
+        ? "Stop containers for this project?"
+        : actionId === "apply-start"
+          ? "Apply changes and start this project?"
+          : actionId === "start"
+            ? "Start containers for this project?"
+            : undefined;
+
+    if (confirmation && !window.confirm(confirmation)) {
       return;
     }
 
-    if (!project || !isExecutableActionId(action.id)) {
-      return;
-    }
-
-    void runProjectAction(project.id, action.id);
+    void runProjectAction(project.id, actionId);
   }
 
-  const runtimeStateLabel = dockerStatus?.daemonAvailable ? "connected" : loading ? "reconnecting..." : "offline";
+  const lifecycle = deriveProjectLifecycle(project);
+  const runtimeStateLabel =
+    lifecycle.state === "running"
+      ? "running"
+      : lifecycle.state === "crashed"
+        ? "crashed"
+        : lifecycle.state === "built-not-running"
+          ? "stopped"
+          : loading
+            ? "checking runtime..."
+            : "source only";
+  const runtimeIndicatorClass =
+    lifecycle.state === "running" ? "running" : lifecycle.state === "crashed" ? "error" : "stopped";
   const uptimeLabel = relativeTimeLabel(selectedService?.details?.runtimeState.startedAt);
-  const dependencyCount = project.services.reduce((count, service) => count + service.dependencyDetails.length, 0);
-  const volumeCount = new Set(project.services.flatMap((service) => service.categories.volumes)).size;
-  const networkCount = new Set(project.services.flatMap((service) => service.categories.networks)).size;
+  const validationOperation = operation?.actionId === "validate" ? operation : undefined;
+  const actionOperation = operation && operation.actionId !== "validate" ? operation : undefined;
+  const validationOperationKey = validationOperation?.operationId || validationOperation?.startedAt;
+  const visibleValidationOperation =
+    validationOperation && validationOperationKey !== dismissedValidationOperationId ? validationOperation : undefined;
   const activeConfigFiles = optimisticConfigFiles ?? project.configFiles;
   const inactiveConfigFiles = (project.allConfigFiles ?? []).filter((file) => !activeConfigFiles.includes(file));
 
   return (
     <main className="workspace-screen">
-      <header className="topbar topbar--workspace">
-        <div className="toolbar-left">
-          <button className="icon-button" onClick={onBack} aria-label="Back to projects">
-            <ArrowLeft size={16} />
-          </button>
-          <div className="toolbar-project">
-            <h2 className="toolbar-project__title">{project.title}</h2>
-            <div className="live-indicator">
-              <span
-                className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? "running" : "stopped"} ${
-                  dockerStatus?.daemonAvailable ? "pulse" : ""
-                }`}
-              />
-              <span className="metadata-note">{runtimeStateLabel}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="toolbar-tools">
-          <label className="search-input search-input--workspace">
-            <ScanSearch size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name, image, or port" />
-          </label>
-          <button
-            className="button button--secondary"
-            onClick={() => setLayoutDirection((current) => (current === "RIGHT" ? "DOWN" : "RIGHT"))}
-          >
-            <LayoutPanelTop size={16} />
-            <span>{layoutDirection === "RIGHT" ? "Layout: Left to right" : "Layout: Top to bottom"}</span>
-          </button>
-          <button className="icon-button" onClick={() => setFitNonce((value) => value + 1)} aria-label="Fit view">
-            <Shrink size={16} />
-          </button>
-          <button className="icon-button" onClick={onRefresh} aria-label="Refresh runtime">
-            <RefreshCw size={16} className={loading ? "busy spin" : undefined} />
-          </button>
-          <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
-            {theme === "dark" ? <SunMedium size={16} /> : <MoonStar size={16} />}
-          </button>
-          <button className="icon-button" aria-label="Settings" onClick={() => setSettingsOpen((value) => !value)}>
-            <Settings size={16} />
-          </button>
-        </div>
-      </header>
-
-      {siblingProjects.length > 1 ? (
-        <div className="project-tabs" role="tablist" aria-label={`Projects in ${project.groupLabel ?? "this folder"}`}>
-          {siblingProjects.map((sibling) => (
-            <button
-              key={sibling.id}
-              role="tab"
-              aria-selected={sibling.id === project.id}
-              className={`project-tab ${sibling.id === project.id ? "project-tab--active" : ""}`}
-              onClick={() => onSelectProject(sibling.id)}
-            >
-              <span
-                className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? (sibling.services.some((s) => s.status === "running") ? "running" : "stopped") : "stopped"}`}
-              />
-              <span>{sibling.title}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       {error ? (
         <div className="error-banner error-banner--inline">
           <TriangleAlert size={16} />
@@ -450,280 +386,362 @@ export function ProjectWorkspace({
         </div>
       ) : null}
 
-      <div className="workspace-frame">
-        <section className="graph-stage">
-          <div className="graph-stage__header">
-            <div>
-              <p className="eyebrow">{project.contextName}</p>
-
-              {project.allConfigFiles && project.allConfigFiles.length > 1 && (
-                <div className={`compose-selector ${composeSelectorOpen ? "" : "compose-selector--collapsed"}`}>
-                  <button
-                    type="button"
-                    className="compose-selector__header"
-                    onClick={() => setComposeSelectorOpen((value) => !value)}
-                    aria-expanded={composeSelectorOpen}
-                  >
-                    {composeSelectorOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <Layers size={14} />
-                    <span className="compose-selector__title">Active compose files</span>
-                    <span className="metadata-note">
-                      {composeSelectorOpen
-                        ? "Merged top to bottom — lower files override higher ones"
-                        : `${activeConfigFiles.length} of ${project.allConfigFiles.length} files active`}
-                    </span>
-                    {savingConfigFiles ? (
-                      <LoaderCircle size={14} className="busy spin compose-selector__spinner" aria-label="Applying compose file selection" />
-                    ) : null}
+      <section className="workspace-canvas">
+        <GraphView
+          project={project}
+          filterQuery={deferredQuery}
+          selectedNodeId={selectedNodeId}
+          layoutDirection={layoutDirection}
+          onSelectNode={(nodeId) => {
+            setSelectedNodeId(nodeId);
+            setDetailTab("overview");
+            setSettingsOpen(false);
+          }}
+          onClearSelection={() => setSelectedNodeId(undefined)}
+        >
+          <Panel position="top-left" style={{ margin: 16 }}>
+            <div className="floating-panel workspace-panel workspace-panel--project">
+              <div className="workspace-project-card">
+                <div className="workspace-project-card__header">
+                  <button className="icon-button" onClick={onBack} aria-label="Back to projects">
+                    <ArrowLeft size={16} />
                   </button>
+                  <div className="workspace-project-card__title-block">
+                    <h2 className="toolbar-project__title">{project.title}</h2>
+                    <div className="live-indicator">
+                      <span
+                        className={`status-dot status-dot--${runtimeIndicatorClass} ${
+                          lifecycle.state === "running" ? "pulse" : ""
+                        }`}
+                      />
+                      <span className="metadata-note">{runtimeStateLabel}</span>
+                    </div>
+                  </div>
+                </div>
 
-                  {composeSelectorOpen ? (
-                    <>
-                      <ol className="compose-file-order">
-                        {activeConfigFiles.map((file, index) => {
-                          const fileName = file.split(/[/\\]/).pop() ?? file;
-                          return (
-                            <li key={file} className="compose-file-order__item" title={file}>
-                              <span className="compose-file-order__index">{index + 1}</span>
-                              <span className="compose-file-order__name">{fileName}</span>
-                              <div className="compose-file-order__actions">
-                                <button
-                                  type="button"
-                                  className="icon-button icon-button--tiny"
-                                  disabled={index === 0}
-                                  onClick={() => handleReorderConfigFile(index, -1)}
-                                  aria-label={`Move ${fileName} earlier in the merge order`}
-                                >
-                                  <ArrowUp size={12} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="icon-button icon-button--tiny"
-                                  disabled={index === activeConfigFiles.length - 1}
-                                  onClick={() => handleReorderConfigFile(index, 1)}
-                                  aria-label={`Move ${fileName} later in the merge order`}
-                                >
-                                  <ArrowDown size={12} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="icon-button icon-button--tiny"
-                                  disabled={activeConfigFiles.length <= 1}
-                                  onClick={() => handleConfigFileToggle(file, false)}
-                                  aria-label={`Remove ${fileName} from the active compose files`}
-                                >
-                                  <X size={12} />
-                                </button>
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ol>
+                <div className="workspace-project-card__meta">
+                  <span className="metadata-note">{project.contextName}</span>
+                </div>
 
-                      {inactiveConfigFiles.length > 0 ? (
-                        <div className="compose-file-order__available">
-                          <span className="metadata-note">Add:</span>
-                          {inactiveConfigFiles.map((file) => {
+                {siblingProjects.length > 1 ? (
+                  <div
+                    className="project-tabs project-tabs--panel"
+                    role="tablist"
+                    aria-label={`Projects in ${project.groupLabel ?? "this folder"}`}
+                  >
+                    {siblingProjects.map((sibling) => (
+                      <button
+                        key={sibling.id}
+                        role="tab"
+                        aria-selected={sibling.id === project.id}
+                        className={`project-tab ${sibling.id === project.id ? "project-tab--active" : ""}`}
+                        onClick={() => onSelectProject(sibling.id)}
+                      >
+                        <span
+                          className={`status-dot status-dot--${
+                            dockerStatus?.daemonAvailable
+                              ? deriveProjectLifecycle(sibling).state === "running"
+                                ? "running"
+                                : "stopped"
+                              : "stopped"
+                          }`}
+                        />
+                        <span>{sibling.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {project.allConfigFiles && project.allConfigFiles.length > 1 ? (
+                  <div className={`compose-selector ${composeSelectorOpen ? "" : "compose-selector--collapsed"}`}>
+                    <button
+                      type="button"
+                      className="compose-selector__header"
+                      onClick={() => setComposeSelectorOpen((value) => !value)}
+                      aria-expanded={composeSelectorOpen}
+                    >
+                      {composeSelectorOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      <Layers size={14} />
+                      <span className="compose-selector__title">Active compose files</span>
+                      {savingConfigFiles ? (
+                        <LoaderCircle size={14} className="busy spin compose-selector__spinner" aria-label="Applying compose file selection" />
+                      ) : null}
+                    </button>
+
+                    {composeSelectorOpen ? (
+                      <>
+                        <span className="metadata-note">Merged top to bottom &mdash; lower files override higher ones</span>
+                        <ol className="compose-file-order">
+                          {activeConfigFiles.map((file, index) => {
                             const fileName = file.split(/[/\\]/).pop() ?? file;
                             return (
-                              <button
-                                type="button"
-                                key={file}
-                                className="chip-button"
-                                title={file}
-                                onClick={() => handleConfigFileToggle(file, true)}
-                              >
-                                <Plus size={12} />
-                                {fileName}
-                              </button>
+                              <li key={file} className="compose-file-order__item" title={file}>
+                                <span className="compose-file-order__index">{index + 1}</span>
+                                <span className="compose-file-order__name">{fileName}</span>
+                                <div className="compose-file-order__actions">
+                                  <button
+                                    type="button"
+                                    className="icon-button icon-button--tiny"
+                                    disabled={index === 0}
+                                    onClick={() => handleReorderConfigFile(index, -1)}
+                                    aria-label={`Move ${fileName} earlier in the merge order`}
+                                  >
+                                    <ArrowUp size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="icon-button icon-button--tiny"
+                                    disabled={index === activeConfigFiles.length - 1}
+                                    onClick={() => handleReorderConfigFile(index, 1)}
+                                    aria-label={`Move ${fileName} later in the merge order`}
+                                  >
+                                    <ArrowDown size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="icon-button icon-button--tiny"
+                                    disabled={activeConfigFiles.length <= 1}
+                                    onClick={() => handleConfigFileToggle(file, false)}
+                                    aria-label={`Remove ${fileName} from the active compose files`}
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                              </li>
                             );
                           })}
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-              )}
+                        </ol>
 
-              <div className="stage-meta">
-                <span className="manifest-tag">{project.access}</span>
-                <span className="manifest-tag">{project.runtimeKind}</span>
-                <span className="metadata-note">{project.lastUpdatedLabel}</span>
-              </div>
-              <p className="graph-summary">
-                {project.services.length} services, {dependencyCount} dependency edges, {networkCount} networks, {volumeCount} volumes
-              </p>
-            </div>
-            <div className="toolbar-note-cluster">
-              {!dockerStatus?.daemonAvailable && dockerStatus?.message ? (
-                <span className="toolbar-note">{dockerStatus.message}</span>
-              ) : null}
-            </div>
-          </div>
-
-          <OperationPanel actions={project.actions} operation={operation} onAction={handleAction} />
-          <ValidationPanel diagnostics={project.diagnostics} />
-
-          <GraphView
-            project={project}
-            filterQuery={deferredQuery}
-            selectedNodeId={selectedNodeId}
-            layoutDirection={layoutDirection}
-            fitNonce={fitNonce}
-            onSelectNode={(nodeId) => {
-              setSelectedNodeId(nodeId);
-              setDetailTab("overview");
-              setSettingsOpen(false);
-            }}
-            onClearSelection={() => setSelectedNodeId(undefined)}
-          />
-        </section>
-
-        {settingsOpen && settings ? (
-          <aside className="detail-panel">
-            <div className="detail-panel__header">
-              <div>
-                <p className="eyebrow">Settings</p>
-                <h3 className="panel-title">Workspace preferences</h3>
-              </div>
-              <button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">
-                <X size={16} />
-              </button>
-            </div>
-            <ConfigurationPanel
-              settings={settings}
-              onUpdate={(next) => void updateSettings(next)}
-              onClearRecents={() => void clearRecents()}
-            />
-          </aside>
-        ) : null}
-
-        {!settingsOpen && selectedService ? (
-          <aside className="detail-panel">
-            <div className="detail-panel__header">
-              <div>
-                <p className="eyebrow">Detail Panel</p>
-                <h3 className="panel-title">{selectedService.name}</h3>
-              </div>
-              <button className="icon-button" onClick={() => setSelectedNodeId(undefined)} aria-label="Close panel">
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="detail-tabs">
-              {(["overview", "env", "mounts", "logs"] as DetailTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  className={`detail-tab ${detailTab === tab ? "detail-tab--active" : ""}`}
-                  onClick={() => setDetailTab(tab)}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-            {detailTab === "overview" ? (
-              <Inspector
-                service={selectedService}
-                uptimeLabel={uptimeLabel}
-                stats={statsState?.ok ? statsState.data : undefined}
-              />
-            ) : null}
-
-            {detailTab === "env" ? (
-              <div className="detail-stack">
-                {(selectedService.details?.env.length ?? 0) > 15 ? (
-                  <label className="search-input">
-                    <ScanSearch size={16} />
-                    <input value={envFilter} onChange={(event) => setEnvFilter(event.target.value)} placeholder="Filter env vars" />
-                  </label>
+                        {inactiveConfigFiles.length > 0 ? (
+                          <div className="compose-file-order__available">
+                            <span className="metadata-note">Add:</span>
+                            {inactiveConfigFiles.map((file) => {
+                              const fileName = file.split(/[/\\]/).pop() ?? file;
+                              return (
+                                <button
+                                  type="button"
+                                  key={file}
+                                  className="chip-button"
+                                  title={file}
+                                  onClick={() => handleConfigFileToggle(file, true)}
+                                >
+                                  <Plus size={12} />
+                                  {fileName}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="metadata-note">
+                        {activeConfigFiles.length} of {project.allConfigFiles.length} files active
+                      </span>
+                    )}
+                  </div>
                 ) : null}
-                <div className="detail-table">
-                  {visibleEnv.length === 0 ? (
-                    <div className="detail-list__row">
-                      <span className="mono-key">Runtime env</span>
-                      <span className="mono-value">Not available for this service.</span>
-                    </div>
-                  ) : (
-                    visibleEnv.map((entry) => (
-                      <div key={entry.key} className="detail-list__row detail-list__row--column">
-                        <div className="detail-row-main">
-                          <span className="mono-key" title={entry.key}>
-                            {entry.key}
-                          </span>
-                          <span className="mono-value" title={entry.masked ? "Value hidden" : entry.value}>
-                            {entry.masked ? "••••••••" : entry.value}
-                          </span>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel position="top-right" style={{ margin: 16 }}>
+            <div className="floating-panel workspace-panel workspace-panel--toolbar">
+              <div className="workspace-toolbar__cluster">
+                <label className="search-input search-input--workspace">
+                  <ScanSearch size={16} />
+                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name, image, or port" />
+                </label>
+              </div>
+
+              <div className="workspace-toolbar__divider" />
+
+              <div className="workspace-toolbar__cluster">
+                <button
+                  className="button button--secondary"
+                  onClick={() => setLayoutDirection((current) => (current === "RIGHT" ? "DOWN" : "RIGHT"))}
+                >
+                  <LayoutPanelTop size={16} />
+                  <span>{layoutDirection === "RIGHT" ? "Left to right" : "Top to bottom"}</span>
+                </button>
+              </div>
+
+              <div className="workspace-toolbar__divider" />
+
+              <div className="workspace-toolbar__cluster">
+                <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
+                  {theme === "dark" ? <SunMedium size={16} /> : <MoonStar size={16} />}
+                </button>
+                <button className="icon-button" aria-label="Settings" onClick={() => setSettingsOpen((value) => !value)}>
+                  <Settings size={16} />
+                </button>
+              </div>
+
+              <div className="workspace-toolbar__divider" />
+
+              <div className="workspace-toolbar__cluster">
+                <ProjectActionToolbar project={project} operation={operation} onRunAction={handleAction} />
+              </div>
+            </div>
+          </Panel>
+
+          <Panel position="bottom-center" style={{ margin: 16 }}>
+            <OperationProgressPanel operation={actionOperation} projectTitle={project.title} />
+          </Panel>
+
+          <Panel position="center-right" style={{ margin: 16 }}>
+            {settingsOpen && settings ? (
+              <aside className="floating-panel detail-panel detail-panel--overlay">
+                <div className="detail-panel__header">
+                  <div>
+                    <p className="eyebrow">Settings</p>
+                    <h3 className="panel-title">Workspace preferences</h3>
+                  </div>
+                  <button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">
+                    <X size={16} />
+                  </button>
+                </div>
+                <ConfigurationPanel
+                  settings={settings}
+                  onUpdate={(next) => void updateSettings(next)}
+                  onClearRecents={() => void clearRecents()}
+                />
+              </aside>
+            ) : visibleValidationOperation ? (
+              <aside className="floating-panel detail-panel detail-panel--overlay">
+                <div className="detail-panel__header">
+                  <div>
+                    <p className="eyebrow">Detail Panel</p>
+                    <h3 className="panel-title">Validation</h3>
+                  </div>
+                  <button
+                    className="icon-button"
+                    onClick={() => setDismissedValidationOperationId(validationOperationKey)}
+                    aria-label="Close panel"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <OperationProgressPanel
+                  operation={visibleValidationOperation}
+                  projectTitle={project.title}
+                  variant="inline"
+                  includeValidate
+                />
+              </aside>
+            ) : selectedService ? (
+              <aside className="floating-panel detail-panel detail-panel--overlay">
+                <div className="detail-panel__header">
+                  <div>
+                    <p className="eyebrow">Detail Panel</p>
+                    <h3 className="panel-title">{selectedService.name}</h3>
+                  </div>
+                  <button className="icon-button" onClick={() => setSelectedNodeId(undefined)} aria-label="Close panel">
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="detail-tabs">
+                  {(["overview", "env", "mounts", "logs"] as DetailTab[]).map((tab) => (
+                    <button
+                      key={tab}
+                      className={`detail-tab ${detailTab === tab ? "detail-tab--active" : ""}`}
+                      onClick={() => setDetailTab(tab)}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+
+                {detailTab === "overview" ? (
+                  <Inspector service={selectedService} uptimeLabel={uptimeLabel} stats={statsState?.ok ? statsState.data : undefined} />
+                ) : null}
+
+                {detailTab === "env" ? (
+                  <div className="detail-stack">
+                    {(selectedService.details?.env.length ?? 0) > 15 ? (
+                      <label className="search-input">
+                        <ScanSearch size={16} />
+                        <input value={envFilter} onChange={(event) => setEnvFilter(event.target.value)} placeholder="Filter env vars" />
+                      </label>
+                    ) : null}
+                    <div className="detail-table">
+                      {visibleEnv.length === 0 ? (
+                        <div className="detail-list__row">
+                          <span className="mono-key">Runtime env</span>
+                          <span className="mono-value">Not available for this service.</span>
                         </div>
-                        <button className="button button--secondary" onClick={() => void navigator.clipboard.writeText(entry.value)}>
-                          Copy
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            {detailTab === "mounts" ? (
-              <div className="detail-table">
-                {selectedService.details?.mounts.length ? (
-                  selectedService.details.mounts.map((mount) => (
-                    <div key={`${mount.source}:${mount.destination}`} className="mount-row">
-                      <span className={`manifest-tag manifest-tag--${mount.type}`}>{mount.type}</span>
-                      <span className="mono-value" title={mount.source}>
-                        {mount.source}
-                      </span>
-                      <span className="mono-value" title={mount.destination}>
-                        {mount.destination}
-                      </span>
-                      <span className="manifest-tag">{mount.rw ? "rw" : "ro"}</span>
+                      ) : (
+                        visibleEnv.map((entry) => (
+                          <div key={entry.key} className="detail-list__row detail-list__row--column">
+                            <div className="detail-row-main">
+                              <span className="mono-key" title={entry.key}>
+                                {entry.key}
+                              </span>
+                              <span className="mono-value" title={entry.masked ? "Value hidden" : entry.value}>
+                                {entry.masked ? "........" : entry.value}
+                              </span>
+                            </div>
+                            <button className="button button--secondary" onClick={() => void navigator.clipboard.writeText(entry.value)}>
+                              Copy
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
-                  ))
-                ) : (
-                  <div className="detail-list__row">
-                    <span className="mono-key">Mounts</span>
-                    <span className="mono-value">No runtime mounts detected.</span>
                   </div>
-                )}
-              </div>
-            ) : null}
+                ) : null}
 
-            {detailTab === "logs" ? (
-              selectedService.details?.containerId ? (
-                logsState?.ok ? (
-                  <LogsPanel lines={logsState.data.lines} fetchedAt={logsState.data.fetchedAt} />
-                ) : logsState?.ok === false ? (
-                  <div className="detail-list__row detail-list__row--error">
-                    <span className="mono-key">Logs</span>
-                    <span className="mono-value">{logsState.error.message}</span>
+                {detailTab === "mounts" ? (
+                  <div className="detail-table">
+                    {selectedService.details?.mounts.length ? (
+                      selectedService.details.mounts.map((mount) => (
+                        <div key={`${mount.source}:${mount.destination}`} className="mount-row">
+                          <span className={`manifest-tag manifest-tag--${mount.type}`}>{mount.type}</span>
+                          <span className="mono-value" title={mount.source}>
+                            {mount.source}
+                          </span>
+                          <span className="mono-value" title={mount.destination}>
+                            {mount.destination}
+                          </span>
+                          <span className="manifest-tag">{mount.rw ? "rw" : "ro"}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="detail-list__row">
+                        <span className="mono-key">Mounts</span>
+                        <span className="mono-value">No runtime mounts detected.</span>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="detail-list__row detail-list__row--loading">
-                    <LoaderCircle size={14} className="busy spin" />
-                    <span className="mono-value">Loading logs...</span>
-                  </div>
-                )
-              ) : (
-                <div className="detail-list__row">
-                  <span className="mono-key">Logs</span>
-                  <span className="mono-value">Runtime logs are not available for source-only services.</span>
-                </div>
-              )
-            ) : null}
-          </aside>
-        ) : null}
+                ) : null}
 
-        {!settingsOpen && !selectedService ? (
-          <aside className="detail-panel detail-panel--empty">
-            <p className="eyebrow">Detail Panel</p>
-            <h3 className="panel-title">No service selected</h3>
-            <p className="body-copy body-copy--secondary">
-              Click a service node in the graph to inspect its overview, environment variables, mounts, and logs.
-            </p>
-          </aside>
-        ) : null}
-      </div>
+                {detailTab === "logs" ? (
+                  selectedService.details?.containerId ? (
+                    logsState?.ok ? (
+                      <LogsPanel lines={logsState.data.lines} fetchedAt={logsState.data.fetchedAt} />
+                    ) : logsState?.ok === false ? (
+                      <div className="detail-list__row detail-list__row--error">
+                        <span className="mono-key">Logs</span>
+                        <span className="mono-value">{logsState.error.message}</span>
+                      </div>
+                    ) : (
+                      <div className="detail-list__row detail-list__row--loading">
+                        <LoaderCircle size={14} className="busy spin" />
+                        <span className="mono-value">Loading logs...</span>
+                      </div>
+                    )
+                  ) : (
+                    <div className="detail-list__row">
+                      <span className="mono-key">Logs</span>
+                      <span className="mono-value">Runtime logs are not available for source-only services.</span>
+                    </div>
+                  )
+                ) : null}
+              </aside>
+            ) : null}
+          </Panel>
+        </GraphView>
+      </section>
     </main>
   );
 }

@@ -15,6 +15,7 @@ function project(id: string, title: string, overrides: Partial<ProjectSummary> =
     services: [],
     diagnostics: [],
     actions: [{ id: "validate", label: "Validate" }],
+    buildStatus: "not-built",
     lastUpdatedLabel: "Opened from source",
     externalNodes: [],
     relationshipEdges: [],
@@ -37,14 +38,13 @@ function baseSnapshot(projects: ProjectSummary[], activeProjectId: string | unde
     activeProjectId,
     settings: {
       themeMode: "dark",
-      runtimeRefreshSeconds: 3,
       statsPollSeconds: 3,
       logTailLines: 200
     }
   };
 }
 
-describe("openSourcePath snapshot sync", () => {
+describe("opening a source and syncing sibling projects", () => {
   beforeEach(() => {
     useAppStore.setState({
       snapshot: null,
@@ -57,25 +57,7 @@ describe("openSourcePath snapshot sync", () => {
     });
   });
 
-  it("picks up sibling projects committed on the main side, not just the one returned by openSourcePath", async () => {
-    const auth = project("a", "docker-compose-auth.yml", { groupId: "C:\\projects\\demo", groupLabel: "demo" });
-    const payment = project("b", "docker-compose-payment.yml", { groupId: "C:\\projects\\demo", groupLabel: "demo" });
-
-    window.dockerExplorer = {
-      openSourcePath: vi.fn().mockResolvedValue({ ok: true, data: auth }),
-      getSnapshot: vi.fn().mockResolvedValue(baseSnapshot([auth, payment], auth.id))
-    } as never;
-
-    const ok = await useAppStore.getState().openSourcePath(auth.sourcePath ?? "");
-    expect(ok).toBe(true);
-
-    const { snapshot, selectedProjectId, loading } = useAppStore.getState();
-    expect(snapshot?.projects.map((p) => p.id).sort()).toEqual(["a", "b"]);
-    expect(selectedProjectId).toBe("a");
-    expect(loading).toBe(false);
-  });
-
-  it("sets selectedProjectId so the opened project (not a stale prior selection) becomes active", async () => {
+  it("sets selectedProjectId to the just-opened project immediately, not a stale prior selection", async () => {
     const previouslySelected = project("old", "docker-compose.yml");
     const justOpened = project("new", "docker-compose.yml");
 
@@ -85,12 +67,33 @@ describe("openSourcePath snapshot sync", () => {
     });
 
     window.dockerExplorer = {
-      openSourcePath: vi.fn().mockResolvedValue({ ok: true, data: justOpened }),
-      getSnapshot: vi.fn().mockResolvedValue(baseSnapshot([justOpened, previouslySelected], justOpened.id))
+      openSourcePath: vi.fn().mockResolvedValue({ ok: true, data: justOpened })
     } as never;
 
     await useAppStore.getState().openSourcePath(justOpened.sourcePath ?? "");
 
     expect(useAppStore.getState().selectedProjectId).toBe("new");
+  });
+
+  // Main commits every sibling project from a folder scan (see project.groupId)
+  // in one shot and then pushes the authoritative snapshot over
+  // subscribeSnapshotEvents - applySnapshot is what the renderer runs when
+  // that push arrives. This is what makes sibling projects (and their tab
+  // strip / group card) show up without the user having to wait for a
+  // separate refresh.
+  it("applySnapshot picks up sibling projects pushed from main without losing the current selection", () => {
+    const auth = project("a", "docker-compose-auth.yml", { groupId: "C:\\projects\\demo", groupLabel: "demo" });
+    const payment = project("b", "docker-compose-payment.yml", { groupId: "C:\\projects\\demo", groupLabel: "demo" });
+
+    useAppStore.setState({
+      snapshot: baseSnapshot([auth], auth.id),
+      selectedProjectId: auth.id
+    });
+
+    useAppStore.getState().applySnapshot(baseSnapshot([auth, payment], auth.id));
+
+    const { snapshot, selectedProjectId } = useAppStore.getState();
+    expect(snapshot?.projects.map((p) => p.id).sort()).toEqual(["a", "b"]);
+    expect(selectedProjectId).toBe("a");
   });
 });

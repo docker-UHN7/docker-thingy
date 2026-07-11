@@ -7,7 +7,7 @@ type ConfigurationPanelProps = {
 };
 
 const THEME_OPTIONS: ThemeMode[] = ["dark", "light", "system"];
-const POLL_OPTIONS: Array<number | null> = [3, 5, 10, null];
+const SAMPLE_OPTIONS: Array<number | null> = [3, 5, 10, null];
 
 export function ConfigurationPanel({ settings, onUpdate, onClearRecents }: ConfigurationPanelProps) {
   return (
@@ -38,30 +38,8 @@ export function ConfigurationPanel({ settings, onUpdate, onClearRecents }: Confi
       </div>
 
       <div className="settings-field">
-        <label className="eyebrow" htmlFor="runtime-poll">
-          Runtime refresh
-        </label>
-        <select
-          id="runtime-poll"
-          className="settings-select"
-          value={settings.runtimeRefreshSeconds === null ? "manual" : String(settings.runtimeRefreshSeconds)}
-          onChange={(event) =>
-            onUpdate({
-              runtimeRefreshSeconds: event.target.value === "manual" ? null : Number(event.target.value)
-            })
-          }
-        >
-          {POLL_OPTIONS.map((option) => (
-            <option key={String(option)} value={option === null ? "manual" : String(option)}>
-              {option === null ? "manual only" : `${option}s`}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="settings-field">
         <label className="eyebrow" htmlFor="stats-poll">
-          Stats poll
+          Live stats interval
         </label>
         <select
           id="stats-poll"
@@ -73,7 +51,7 @@ export function ConfigurationPanel({ settings, onUpdate, onClearRecents }: Confi
             })
           }
         >
-          {POLL_OPTIONS.map((option) => (
+          {SAMPLE_OPTIONS.map((option) => (
             <option key={String(option)} value={option === null ? "manual" : String(option)}>
               {option === null ? "manual only" : `${option}s`}
             </option>

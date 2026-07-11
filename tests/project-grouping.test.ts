@@ -15,6 +15,7 @@ function project(id: string, title: string): ProjectSummary {
     services: [],
     diagnostics: [],
     actions: [{ id: "validate", label: "Validate" }],
+    buildStatus: "not-built",
     lastUpdatedLabel: "Opened from source",
     externalNodes: [],
     relationshipEdges: [],

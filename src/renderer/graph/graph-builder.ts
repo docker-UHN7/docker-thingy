@@ -1,14 +1,14 @@
 import ELK from "elkjs/lib/elk.bundled.js";
-import { MarkerType, type Edge, type Node } from "@xyflow/react";
+import { MarkerType, Position, type Edge, type Node } from "@xyflow/react";
 import type { MountRecord, ProjectSummary, ServiceNodeModel } from "../../shared/contracts";
 
 const elk = new ELK();
 
 type GraphNodeData =
-  | ServiceNodeModel
+  | (ServiceNodeModel & { layoutDirection: "RIGHT" | "DOWN" })
   | { label: string }
-  | { name: string; path: string }
-  | { name: string; kind: string };
+  | { name: string; path: string; layoutDirection: "RIGHT" | "DOWN" }
+  | { name: string; kind: string; layoutDirection: "RIGHT" | "DOWN" };
 
 type GraphEdgeData = {
   kind: "dependency" | "mount" | "network-link";
@@ -21,9 +21,9 @@ type GraphEdgeData = {
 // Both node families are fixed-height (with `overflow: hidden`) precisely so
 // that "actual rendered size" can never drift from these constants regardless
 // of content length.
-export const SERVICE_NODE_WIDTH = 216;
-export const SERVICE_NODE_HEIGHT = 156;
-export const COMPACT_NODE_WIDTH = 160;
+export const SERVICE_NODE_WIDTH = 208;
+export const SERVICE_NODE_HEIGHT = 140;
+export const COMPACT_NODE_WIDTH = 152;
 export const COMPACT_NODE_HEIGHT = 72;
 
 // Rough width estimate for an edge label so ELK can reserve enough space
@@ -69,18 +69,44 @@ function createVolumeLabel(service: ServiceNodeModel, volumeName: string): strin
   return `${mount.destination} (${mount.rw ? "rw" : "ro"})`;
 }
 
-export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData>[]; edges: Edge<GraphEdgeData>[] } {
+function dependencyEdgeLabel(condition: string | undefined): string | undefined {
+  if (!condition || condition === "service_started") {
+    return undefined;
+  }
+
+  return condition.replace(/^service_/, "");
+}
+
+function networkEdgeLabel(label: string | undefined): string | undefined {
+  if (!label || label === "shared network") {
+    return undefined;
+  }
+
+  return label;
+}
+
+export function buildGraph(
+  project: ProjectSummary,
+  direction: "RIGHT" | "DOWN" = "RIGHT"
+): { nodes: Node<GraphNodeData>[]; edges: Edge<GraphEdgeData>[] } {
   const nodes: Node<GraphNodeData>[] = [];
   const edges: Edge<GraphEdgeData>[] = [];
   const volumeNames = new Set<string>();
   const serviceByName = new Map(project.services.map((service) => [service.name, service]));
+  const targetPosition = direction === "RIGHT" ? Position.Left : Position.Top;
+  const sourcePosition = direction === "RIGHT" ? Position.Right : Position.Bottom;
 
   project.services.forEach((service, index) => {
     nodes.push({
       id: service.id,
       type: "serviceNode",
       position: { x: 260 * (index % 3), y: 220 * Math.floor(index / 3) },
-      data: service
+      targetPosition,
+      sourcePosition,
+      data: {
+        ...service,
+        layoutDirection: direction
+      }
     });
   });
 
@@ -96,7 +122,7 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
         id: `depends_on:${sourceService.id}:${targetId}`,
         source: sourceService.id,
         target: targetId,
-        label: relationship.condition ?? "depends_on",
+        label: dependencyEdgeLabel(relationship.condition),
         type: "smoothstep",
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -168,7 +194,7 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
         id: `network:${left.id}:${right.id}:${relationship.label ?? "shared"}`,
         source: left.id,
         target: right.id,
-        label: relationship.label ?? "shared network",
+        label: networkEdgeLabel(relationship.label),
         type: "smoothstep",
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -199,9 +225,11 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
       id: `volume:${volumeName}`,
       type: "volumeNode",
       position: { x: 0, y: 0 },
+      sourcePosition,
       data: {
         name: volumeName,
-        path: volumeName
+        path: volumeName,
+        layoutDirection: direction
       }
     });
   }
@@ -211,9 +239,11 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
       id: external.id,
       type: "externalNode",
       position: { x: 0, y: 0 },
+      targetPosition,
       data: {
         name: external.name,
-        kind: external.kind
+        kind: external.kind,
+        layoutDirection: direction
       }
     });
   }
@@ -225,23 +255,24 @@ export async function layoutGraph(
   project: ProjectSummary,
   direction: "RIGHT" | "DOWN" = "RIGHT"
 ): Promise<{ nodes: Node<GraphNodeData>[]; edges: Edge<GraphEdgeData>[] }> {
-  const { nodes, edges } = buildGraph(project);
+  const { nodes, edges } = buildGraph(project, direction);
 
   const layout = await elk.layout({
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": direction,
-      "elk.spacing.nodeNode": "48",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "96",
+      "elk.spacing.nodeNode": direction === "RIGHT" ? "76" : "84",
+      "elk.layered.spacing.nodeNodeBetweenLayers": direction === "RIGHT" ? "156" : "140",
       "elk.edgeRouting": "ORTHOGONAL",
+      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
       // Reserve room around edges/labels so a label chip never sits flush
       // against (or on top of) a node's border.
-      "elk.spacing.edgeNode": "28",
-      "elk.spacing.edgeEdge": "16",
-      "elk.spacing.edgeLabel": "12",
-      "elk.layered.spacing.edgeNodeBetweenLayers": "28",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "16"
+      "elk.spacing.edgeNode": "52",
+      "elk.spacing.edgeEdge": "24",
+      "elk.spacing.edgeLabel": "18",
+      "elk.layered.spacing.edgeNodeBetweenLayers": "48",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "24"
     },
     // Widths/heights here must match the actual rendered node sizes (see the
     // SERVICE_NODE_*/COMPACT_NODE_* constants above and the corresponding
