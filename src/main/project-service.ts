@@ -31,6 +31,7 @@ import { isValidContainerRef, normalizeLogTail, sanitizeSettingsPatch } from "./
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
+  "start",
   "apply-start",
   "stop",
   "build-image"
@@ -233,10 +234,16 @@ export class ProjectService {
 
   private async commitOpenedProject(sourcePath: string, project: ProjectSummary): Promise<OpenSourceResult> {
     const sourceText = await readFile(sourcePath, "utf8");
+    const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+    const sourceProjects = this.snapshot.projects.filter(
+      (entry) => entry.access !== "runtime-only" && entry.id !== project.id
+    );
+    const mergedProjects = mergeProjectLists(project.contextName, [project, ...sourceProjects], runtimeProjects);
+    const mergedProject = mergedProjects.find((entry) => entry.id === project.id) ?? project;
 
     this.snapshot = {
       ...this.snapshot,
-      projects: [project, ...this.snapshot.projects.filter((entry) => entry.id !== project.id)],
+      projects: mergedProjects,
       recents: [sourcePath, ...this.snapshot.recents.filter((entry) => entry !== sourcePath)].slice(0, 12),
       activeProjectId: project.id,
       activeSourceSession: {
@@ -250,7 +257,7 @@ export class ProjectService {
 
     return {
       ok: true,
-      data: project
+      data: mergedProject
     };
   }
 
@@ -421,7 +428,7 @@ export class ProjectService {
         onEvent({ kind: "output", projectId, operationId, actionId, stream, line });
       });
 
-      let snapshot = await this.finalizeOperation(projectId, outcome);
+      let snapshot = await this.finalizeOperation(projectId, actionId, outcome);
       if (actionId !== "validate") {
         // Container state changed (or was attempted to change) - pull fresh
         // runtime data so the graph/status dots reflect it immediately.
@@ -463,7 +470,11 @@ export class ProjectService {
     }
   }
 
-  private async finalizeOperation(projectId: string, outcome: ValidationOutcome): Promise<AppSnapshot> {
+  private async finalizeOperation(
+    projectId: string,
+    actionId: ExecutableProjectActionId,
+    outcome: ValidationOutcome
+  ): Promise<AppSnapshot> {
     return this.withLock(async () => {
       const diagnostic: ProjectDiagnostics = {
         level: outcome.ok ? "info" : "error",
@@ -479,7 +490,11 @@ export class ProjectService {
                 ...project,
                 // Replace any previous diagnostic with the same title instead
                 // of letting repeated clicks pile up duplicate entries.
-                diagnostics: [diagnostic, ...project.diagnostics.filter((entry) => entry.title !== diagnostic.title)]
+                diagnostics: [diagnostic, ...project.diagnostics.filter((entry) => entry.title !== diagnostic.title)],
+                buildStatus:
+                  outcome.ok && (actionId === "validate" || actionId === "build-image" || actionId === "apply-start")
+                    ? "built"
+                    : project.buildStatus
               }
             : project
         )

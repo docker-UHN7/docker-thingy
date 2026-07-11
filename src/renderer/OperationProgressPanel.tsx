@@ -1,0 +1,167 @@
+import { AlertTriangle, CheckCircle2, ChevronDown, Circle, LoaderCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import type { OperationState } from "./store";
+
+type OperationProgressPanelProps = {
+  operation: OperationState | undefined;
+  projectTitle: string;
+};
+
+type ProgressStep = {
+  key: string;
+  label: string;
+  status: "pending" | "active" | "done" | "failed";
+  details: string[];
+};
+
+function operationLabel(actionId: OperationState["actionId"], projectTitle: string): string {
+  switch (actionId) {
+    case "build-image":
+      return `Building ${projectTitle}`;
+    case "stop":
+      return `Stopping ${projectTitle}`;
+    case "start":
+      return `Starting ${projectTitle}`;
+    case "apply-start":
+      return `Applying ${projectTitle}`;
+    default:
+      return projectTitle;
+  }
+}
+
+function parseOperationSteps(operation: OperationState): ProgressStep[] {
+  const steps: ProgressStep[] = [];
+  const ensureStep = (key: string, label: string): ProgressStep => {
+    let step = steps.find((entry) => entry.key === key);
+    if (!step) {
+      step = { key, label, status: "pending", details: [] };
+      steps.push(step);
+    }
+    return step;
+  };
+
+  for (const line of operation.lines) {
+    const buildKit = line.match(/^#(\d+)\s+(.*)$/);
+    if (buildKit) {
+      const step = ensureStep(`build-${buildKit[1]}`, buildKit[2]!.replace(/\s+DONE.*$/i, "").trim() || `Build step ${buildKit[1]}`);
+      step.details.push(line);
+      step.status = /\bDONE\b/i.test(line) ? "done" : /\bERROR\b|\bCANCELED\b/i.test(line) ? "failed" : "active";
+      continue;
+    }
+
+    const containerAction = line.match(/Container\s+([^\s]+)\s+(Stopping|Stopped|Starting|Started|Waiting|Error)/i);
+    if (containerAction) {
+      const containerName = containerAction[1] ?? "container";
+      const verb = containerAction[2]?.toLowerCase() ?? "working";
+      const step = ensureStep(`container-${containerName}`, `${containerName} ${verb}`);
+      step.details.push(line);
+      step.status =
+        verb === "stopped" || verb === "started"
+          ? "done"
+          : verb === "error"
+            ? "failed"
+            : "active";
+      continue;
+    }
+
+    const generic = ensureStep(`generic-${steps.length}`, line);
+    generic.details.push(line);
+    generic.status = operation.status === "failed" ? "failed" : operation.status === "success" ? "done" : "active";
+  }
+
+  if (steps.length === 0) {
+    steps.push({
+      key: "operation",
+      label: operation.status === "running" ? "Working" : operation.status === "success" ? "Completed" : "Failed",
+      status: operation.status === "running" ? "active" : operation.status === "success" ? "done" : "failed",
+      details: operation.lines
+    });
+  }
+
+  if (operation.status === "failed") {
+    const active = [...steps].reverse().find((step) => step.status === "active");
+    if (active) {
+      active.status = "failed";
+    }
+  }
+
+  return steps;
+}
+
+export function OperationProgressPanel({ operation, projectTitle }: OperationProgressPanelProps) {
+  const [dismissedOperationId, setDismissedOperationId] = useState<string | undefined>();
+  const [expandedKey, setExpandedKey] = useState<string | undefined>();
+  const operationKey = operation ? operation.operationId || operation.startedAt : undefined;
+
+  useEffect(() => {
+    if (!operation) {
+      return;
+    }
+
+    if (operation.status === "running") {
+      setDismissedOperationId(undefined);
+      return;
+    }
+
+    if (operation.status === "success") {
+      const timer = window.setTimeout(() => {
+        setDismissedOperationId(operationKey);
+      }, 2200);
+
+      return () => window.clearTimeout(timer);
+    }
+  }, [operation, operationKey]);
+
+  const steps = useMemo(() => (operation ? parseOperationSteps(operation) : []), [operation]);
+  if (!operation || operation.actionId === "validate" || dismissedOperationId === operationKey) {
+    return null;
+  }
+
+  return (
+    <div className={`floating-panel floating-panel--operation floating-panel--${operation.status === "failed" ? "error" : operation.status === "success" ? "success" : "warning"}`}>
+      <div className="operation-progress__header">
+        <strong>{operationLabel(operation.actionId, projectTitle)}</strong>
+      </div>
+
+      <div className="operation-progress__steps">
+        {steps.map((step) => {
+          const active = step.status === "active";
+          const failed = step.status === "failed";
+          const expanded = expandedKey === step.key;
+
+          return (
+            <div key={step.key} className="operation-progress__step">
+              <div className="operation-progress__row">
+                <span className="operation-progress__icon">
+                  {step.status === "done" ? <CheckCircle2 size={14} /> : failed ? <AlertTriangle size={14} /> : active ? <LoaderCircle size={14} className="busy spin" /> : <Circle size={14} />}
+                </span>
+                <span className="operation-progress__label">{step.label}</span>
+              </div>
+
+              {active ? <div className="operation-progress__bar" /> : null}
+
+              {failed ? (
+                <div className="operation-progress__failure">
+                  <button className="validate-toast__toggle" onClick={() => setExpandedKey(expanded ? undefined : step.key)}>
+                    <span>Details</span>
+                    <ChevronDown size={14} className={expanded ? "validate-toast__chevron validate-toast__chevron--open" : "validate-toast__chevron"} />
+                  </button>
+                  {expanded ? (
+                    <div className="validate-toast__log">
+                      {step.details.map((line, index) => (
+                        <div key={`${step.key}:${index}`} className="log-line">
+                          {line}
+                        </div>
+                      ))}
+                      {operation.errorMessage ? <div className="log-line">{operation.errorMessage}</div> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

@@ -277,11 +277,13 @@ export type ProjectSummary = {
   runtimeKind: RuntimeKind;
   access: ProjectAccess;
   contextName: string;
+  composeProjectName?: string | undefined;
   sourcePath?: string | undefined;
   configFiles: string[];
   services: ServiceNodeModel[];
   diagnostics: ProjectDiagnostics[];
   actions: ProjectAction[];
+  buildStatus: "not-built" | "built";
   lastUpdatedLabel: string;
   lastCheckedAt?: string | undefined;
   externalNodes: GraphExternalNode[];
@@ -348,7 +350,7 @@ export type BuildTarget = {
 
 export type OperationStream = "stdout" | "stderr";
 
-export type ExecutableProjectActionId = "validate" | "apply-start" | "stop" | "build-image";
+export type ExecutableProjectActionId = "validate" | "start" | "apply-start" | "stop" | "build-image";
 
 export type OperationEvent =
   | {

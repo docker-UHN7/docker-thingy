@@ -1,6 +1,6 @@
-import { Background, BackgroundVariant, Controls, ReactFlow, type ReactFlowInstance } from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import type { ProjectSummary } from "../../shared/contracts";
 import { buildGraph, layoutGraph } from "./graph-builder";
@@ -19,6 +19,7 @@ type GraphViewProps = {
   selectedNodeId: string | undefined;
   layoutDirection: "RIGHT" | "DOWN";
   fitNonce: number;
+  children?: ReactNode;
   onSelectNode(nodeId: string): void;
   onClearSelection(): void;
 };
@@ -53,6 +54,7 @@ export function GraphView({
   selectedNodeId,
   layoutDirection,
   fitNonce,
+  children,
   onSelectNode,
   onClearSelection
 }: GraphViewProps) {
@@ -189,6 +191,8 @@ export function GraphView({
           scheduleFitView();
         }}
       >
+        {children}
+        <MiniMap className="graph-minimap" pannable zoomable />
         <Controls showInteractive={false} />
         <Background variant={BackgroundVariant.Dots} color="var(--border-subtle)" gap={20} size={1} />
       </ReactFlow>

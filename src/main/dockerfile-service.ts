@@ -77,6 +77,7 @@ export async function loadDockerfileProject(sourcePath: string, contextName: str
     runtimeKind: "dockerfile",
     access: "editable",
     contextName,
+    composeProjectName: undefined,
     sourcePath,
     configFiles: [sourcePath],
     services: [
@@ -111,6 +112,7 @@ export async function loadDockerfileProject(sourcePath: string, contextName: str
       { id: "validate", label: "Validate", emphasis: "primary" },
       { id: "build-image", label: "Build image", confirmation: "Build an image from this Dockerfile?" }
     ],
+    buildStatus: "not-built",
     lastUpdatedLabel: "Opened from source",
     lastCheckedAt: new Date().toISOString(),
     externalNodes: [],

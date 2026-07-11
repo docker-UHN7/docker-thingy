@@ -38,6 +38,7 @@ describe("buildGraph", () => {
       ],
       diagnostics: [],
       actions: [],
+      buildStatus: "built",
       lastUpdatedLabel: "Now",
       externalNodes: [],
       relationshipEdges: [

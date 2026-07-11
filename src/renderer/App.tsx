@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { useAppStore } from "./store";
@@ -16,10 +16,14 @@ export function App() {
   const openRecentSource = useAppStore((state) => state.openRecentSource);
   const selectProject = useAppStore((state) => state.selectProject);
   const toggleTheme = useAppStore((state) => state.toggleTheme);
-  const activeProject = useAppStore((state) => state.activeProject());
+  const selectedProjectId = useAppStore((state) => state.selectedProjectId);
   const [screen, setScreen] = useState<"launcher" | "workspace">("launcher");
 
   const settings = snapshot?.settings;
+  const activeProject = useMemo(
+    () => snapshot?.projects.find((project) => project.id === selectedProjectId),
+    [snapshot?.projects, selectedProjectId]
+  );
 
   useEffect(() => {
     void bootstrap();
@@ -58,19 +62,19 @@ export function App() {
           onRefresh={() => void refreshRuntime()}
           onOpenSource={async () => {
             const success = await openSource();
-            if (success && useAppStore.getState().activeProject()) {
+            if (success && useAppStore.getState().selectedProjectId) {
               setScreen("workspace");
             }
           }}
           onOpenSourcePath={async (sourcePath) => {
             const success = await openSourcePath(sourcePath);
-            if (success && useAppStore.getState().activeProject()) {
+            if (success && useAppStore.getState().selectedProjectId) {
               setScreen("workspace");
             }
           }}
           onOpenRecent={async (sourcePath) => {
             const success = await openRecentSource(sourcePath);
-            if (success && useAppStore.getState().activeProject()) {
+            if (success && useAppStore.getState().selectedProjectId) {
               setScreen("workspace");
             }
           }}

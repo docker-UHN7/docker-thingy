@@ -709,8 +709,10 @@ function mergeRuntimeProjectWithSource(
   return {
     ...runtimeProject,
     services: mergedServices,
+    composeProjectName: runtimeProject.composeProjectName,
     sourcePath: sourceProject.sourcePath,
     diagnostics: [...sourceProject.diagnostics],
+    buildStatus: "built",
     externalNodes: buildExternalNodes(mergedServices),
     relationshipEdges: buildRelationshipEdges(mergedServices),
     sourceLinked: true
@@ -749,7 +751,9 @@ export function mergeSourceProjectWithRuntime(
   return {
     ...sourceProject,
     subtitle: runtimeProject.subtitle,
+    composeProjectName: runtimeProject.composeProjectName,
     services: mergedServices,
+    buildStatus: "built",
     externalNodes: buildExternalNodes(mergedServices),
     relationshipEdges: buildRelationshipEdges(mergedServices),
     lastUpdatedLabel: "Just refreshed",
@@ -919,6 +923,7 @@ function standaloneContainerProject(
     runtimeKind: "container",
     access: "runtime-only",
     contextName,
+    composeProjectName: undefined,
     configFiles: [],
     services: [service],
     diagnostics: [
@@ -929,6 +934,7 @@ function standaloneContainerProject(
       }
     ],
     actions: [{ id: "refresh", label: "Refresh" }],
+    buildStatus: "built",
     lastUpdatedLabel: "Just refreshed",
     lastCheckedAt: new Date().toISOString(),
     externalNodes: [],
@@ -1003,6 +1009,7 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
           runtimeKind: "compose" as const,
           access: "runtime-only" as const,
           contextName,
+          composeProjectName: project.Name,
           sourcePath: undefined,
           configFiles: resolvedConfigFiles,
           services,
@@ -1015,10 +1022,16 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
                 }
               ]
             : [],
-          actions: [
-            { id: "refresh" as const, label: "Refresh" },
-            { id: "open-source" as const, label: "Open and verify source", emphasis: "primary" as const }
-          ],
+          actions: resolvedConfigFiles.length > 0
+            ? [
+                { id: "validate" as const, label: "Validate", emphasis: "primary" as const },
+                { id: "build-image" as const, label: "Build" },
+                { id: "start" as const, label: "Start" },
+                { id: "apply-start" as const, label: "Apply & Start" },
+                { id: "stop" as const, label: "Stop", emphasis: "danger" as const }
+              ]
+            : [],
+          buildStatus: "built" as const,
           lastUpdatedLabel: "Just refreshed",
           lastCheckedAt: new Date().toISOString(),
           externalNodes: buildExternalNodes(services),

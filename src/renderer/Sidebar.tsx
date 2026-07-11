@@ -3,6 +3,7 @@ import { useDeferredValue, useMemo, useState, type DragEvent } from "react";
 import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contracts";
 import { useAppStore } from "./store";
 import { ConfigurationPanel } from "./ConfigurationPanel";
+import { deriveProjectLifecycle } from "./project-state";
 
 type SidebarProps = {
   projects: ProjectSummary[];
@@ -28,17 +29,6 @@ function middleTruncate(value: string, head = 20, tail = 16): string {
   }
 
   return `${value.slice(0, head)}...${value.slice(-tail)}`;
-}
-
-function projectState(project: ProjectSummary): "running" | "stopped" | "warning" {
-  const hasRunning = project.services.some((service) => service.status === "running");
-  const hasStopped = project.services.some((service) => service.status !== "running");
-
-  if (hasRunning && hasStopped) {
-    return "warning";
-  }
-
-  return hasRunning ? "running" : "stopped";
 }
 
 function isAcceptedSource(path: string): boolean {
@@ -219,6 +209,9 @@ export function Sidebar({
               {filteredProjects.map((project) => {
                 const location = project.sourcePath ?? project.configFiles[0] ?? "Runtime-only";
                 const stale = !dockerStatus?.daemonAvailable;
+                const lifecycle = deriveProjectLifecycle(project);
+                const statusClass =
+                  lifecycle.state === "running" ? "running" : lifecycle.state === "crashed" ? "error" : "stopped";
                 return (
                   <button
                     key={project.id}
@@ -229,10 +222,10 @@ export function Sidebar({
                     <div className="project-card__head">
                       <div className="project-card__title">
                         <span
-                          className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? projectState(project) : "stopped"} ${
+                          className={`status-dot status-dot--${dockerStatus?.daemonAvailable ? statusClass : "stopped"} ${
                             dockerStatus?.daemonAvailable ? "" : "status-dot--stale"
                           } ${
-                            dockerStatus?.daemonAvailable && projectState(project) === "running" ? "pulse" : ""
+                            dockerStatus?.daemonAvailable && lifecycle.state === "running" ? "pulse" : ""
                           }`}
                         />
                         <span>{project.title}</span>
@@ -250,7 +243,7 @@ export function Sidebar({
                       <span className="manifest-tag">{project.services.length} services</span>
                       <span className="manifest-tag">{project.runtimeKind}</span>
                       <span className="manifest-tag" title={stale ? staleHint : "Docker was reachable when this project was last checked."}>
-                        {dockerStatus?.daemonAvailable ? "reachable" : "stale"}
+                        {stale ? "stale" : lifecycle.hasRuntimeMatch ? "runtime linked" : "source only"}
                       </span>
                     </div>
 

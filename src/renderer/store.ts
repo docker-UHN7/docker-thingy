@@ -288,10 +288,11 @@ export const useAppStore = create<AppState>((set, get) => ({
                 logTailLines: 200
               }
             },
+        selectedProjectId: result.data.id,
         loading: false
       });
 
-    return true;
+      return true;
     } catch (error) {
       set({
         loading: false,
@@ -337,9 +338,10 @@ export const useAppStore = create<AppState>((set, get) => ({
                 logTailLines: 200
               }
             },
+        selectedProjectId: result.data.id,
         recentLoadingPath: undefined
       });
-    
+
       return true;
     } catch (error) {
       set({
