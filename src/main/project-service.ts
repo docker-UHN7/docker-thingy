@@ -18,6 +18,7 @@ import type {
   ProjectDiagnostics,
   ProjectSummary,
   ReadSourceFileResult,
+  RemoveServiceResult,
   SaveSourceFileResult,
   StatsSnapshotResult,
   ValidationOutcome
@@ -30,7 +31,7 @@ import {
   mergeSourceProjectWithRuntime,
   resolveConfigKey
 } from "./docker-service";
-import { addServiceToCompose, hashSource, loadComposeProject } from "./compose-service";
+import { addServiceToCompose, hashSource, loadComposeProject, removeServiceFromCompose } from "./compose-service";
 import { loadDockerfileProject, validateImageTag } from "./dockerfile-service";
 import { executeProjectAction } from "./operation-runner";
 import { isTimeoutError } from "./process-runner";
@@ -1014,6 +1015,68 @@ export class ProjectService {
       this.emitSnapshot();
 
       return { ok: true, data: { snapshot: this.snapshot, serviceName: input.serviceName } };
+    });
+  }
+
+  /**
+   * Removes a service from a Compose project's base file - its own block,
+   * any depends_on references to it in other services, and any named volume
+   * it exclusively used. The renderer only ever sends a projectId + service
+   * name; which file to edit and what to remove is resolved entirely here.
+   */
+  async removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult> {
+    return this.withLock(async () => {
+      const project = this.snapshot.projects.find((entry) => entry.id === projectId);
+      if (!project || project.runtimeKind !== "compose" || project.access !== "editable") {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: "Project not found or is not an editable Compose project." }
+        };
+      }
+
+      if (!project.services.some((service) => service.name === serviceName)) {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: `Service "${serviceName}" was not found in this project.` }
+        };
+      }
+
+      const mainPath = project.sourcePath ?? project.configFiles[0];
+      if (!mainPath) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Project has no known source path." } };
+      }
+
+      const currentText = await readFile(mainPath, "utf8");
+      const { sourceText: nextText } = removeServiceFromCompose(currentText, serviceName);
+
+      const saveResult = await saveSourceAtomically(mainPath, nextText, hashSource(currentText));
+      if (!saveResult.ok) {
+        return saveResult;
+      }
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+      if (project.allConfigFiles) {
+        reloaded.allConfigFiles = project.allConfigFiles;
+      }
+      if (project.groupId) {
+        reloaded.groupId = project.groupId;
+        reloaded.groupLabel = project.groupLabel;
+      }
+
+      const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+      const sourceProjects = this.snapshot.projects.filter(
+        (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+      );
+      const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+      this.snapshot = {
+        ...this.snapshot,
+        projects: mergedProjects
+      };
+      this.emitSnapshot();
+
+      return { ok: true, data: { snapshot: this.snapshot, serviceName } };
     });
   }
 

@@ -744,3 +744,102 @@ export function addServiceToCompose(
 
   return { sourceText: String(document), diffPreview: diffLines.join("\n") };
 }
+
+// Removes `dependencyService` from `targetService`'s depends_on (whichever
+// form it's in), dropping the depends_on key entirely once it's empty rather
+// than leaving `depends_on: []` / `depends_on: {}` behind.
+function removeDependency(document: Document, targetService: string, dependencyService: string): void {
+  const path = ["services", targetService, "depends_on"];
+  const existing = document.getIn(path, true);
+
+  if (isSeq(existing)) {
+    const index = existing.items.findIndex(
+      (item) => (isScalar(item) ? String(item.value) : String(item)) === dependencyService
+    );
+    if (index !== -1) {
+      existing.items.splice(index, 1);
+    }
+    if (existing.items.length === 0) {
+      document.deleteIn(path);
+    }
+    return;
+  }
+
+  if (isMap(existing)) {
+    existing.delete(dependencyService);
+    if (existing.items.length === 0) {
+      document.deleteIn(path);
+    }
+  }
+}
+
+function topLevelVolumeNames(document: Document): Set<string> {
+  const volumesNode = document.get("volumes", true);
+  if (!isMap(volumesNode)) {
+    return new Set();
+  }
+
+  return new Set(volumesNode.items.map((item) => String(item.key)));
+}
+
+function isVolumeReferencedByAnyService(document: Document, volumeName: string): boolean {
+  const servicesNode = document.get("services", true);
+  if (!isMap(servicesNode)) {
+    return false;
+  }
+
+  return servicesNode.items.some((item) => {
+    if (!isMap(item.value)) {
+      return false;
+    }
+
+    return toPlainArray(item.value.get("volumes", true)).some(
+      (entry) => typeof entry === "string" && entry.split(":")[0] === volumeName
+    );
+  });
+}
+
+// Removes a service (e.g. from the "Add service" catalog, or hand-written)
+// from the compose file: deletes its own block, strips it out of every other
+// service's depends_on, and drops any top-level named volume that only this
+// service referenced - so adding a service and then removing it round-trips
+// cleanly instead of leaving orphaned volume declarations behind. Bind
+// mounts and volumes still used by another service are left untouched.
+export function removeServiceFromCompose(
+  sourceText: string,
+  serviceName: string
+): { sourceText: string; diffPreview: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+
+  const servicesNode = document.get("services", true);
+  const removedServiceNode = isMap(servicesNode) ? servicesNode.get(serviceName, true) : undefined;
+
+  const declaredVolumeNames = topLevelVolumeNames(document);
+  const ownVolumeNames = isMap(removedServiceNode)
+    ? toPlainArray(removedServiceNode.get("volumes", true))
+        .map((entry) => (typeof entry === "string" ? entry.split(":")[0] : undefined))
+        .filter((name): name is string => name !== undefined && declaredVolumeNames.has(name))
+    : [];
+
+  document.deleteIn(["services", serviceName]);
+
+  if (isMap(servicesNode)) {
+    for (const item of servicesNode.items) {
+      const otherServiceName = String(item.key);
+      if (otherServiceName !== serviceName) {
+        removeDependency(document, otherServiceName, serviceName);
+      }
+    }
+  }
+
+  for (const volumeName of ownVolumeNames) {
+    if (!isVolumeReferencedByAnyService(document, volumeName)) {
+      document.deleteIn(["volumes", volumeName]);
+    }
+  }
+
+  return {
+    sourceText: String(document),
+    diffPreview: `- services.${serviceName}`
+  };
+}

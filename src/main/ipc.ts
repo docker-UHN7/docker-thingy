@@ -7,6 +7,7 @@ import type {
   OpenSourceResult,
   ProjectActionResult,
   ReadSourceFileResult,
+  RemoveServiceResult,
   SaveSourceFileResult,
   SearchDockerHubResult
 } from "../shared/contracts";
@@ -144,6 +145,21 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       }
 
       return projectService.addServiceToProject(projectId, input as AddServiceInput);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.REMOVE_SERVICE_FROM_PROJECT,
+    async (event, projectId: unknown, serviceName: unknown): Promise<RemoveServiceResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof serviceName !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid remove-service request." } };
+      }
+
+      return projectService.removeServiceFromProject(projectId, serviceName);
     }
   );
 

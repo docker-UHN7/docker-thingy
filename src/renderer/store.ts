@@ -8,6 +8,7 @@ import type {
   OperationEvent,
   ProjectSummary,
   ReadSourceFileResult,
+  RemoveServiceResult,
   SaveSourceFileResult,
   SearchDockerHubResult,
   ThemeMode
@@ -95,6 +96,7 @@ type AppState = {
   ): Promise<SaveSourceFileResult>;
   searchDockerHub(query: string): Promise<SearchDockerHubResult>;
   addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
+  removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult>;
   activeProject(): ProjectSummary | undefined;
   runProjectAction(projectId: string, actionId: ExecutableProjectActionId): Promise<void>;
   handleOperationEvent(event: OperationEvent): void;
@@ -413,6 +415,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   async addServiceToProject(projectId, input) {
     const result = await window.dockerExplorer.addServiceToProject(projectId, input);
+    if (result.ok) {
+      get().applySnapshot(result.data.snapshot);
+    }
+    return result;
+  },
+  async removeServiceFromProject(projectId, serviceName) {
+    const result = await window.dockerExplorer.removeServiceFromProject(projectId, serviceName);
     if (result.ok) {
       get().applySnapshot(result.data.snapshot);
     }

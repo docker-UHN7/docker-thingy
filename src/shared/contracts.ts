@@ -413,6 +413,8 @@ export type DockerHubSearchResult = {
 
 export type SearchDockerHubResult = Result<{ results: DockerHubSearchResult[] }>;
 
+export type RemoveServiceResult = Result<{ snapshot: AppSnapshot; serviceName: string }>;
+
 export type PreloadApi = {
   getSnapshot(): Promise<AppSnapshot>;
   openSource(): Promise<OpenSourceResult>;
@@ -432,6 +434,7 @@ export type PreloadApi = {
   ): Promise<SaveSourceFileResult>;
   searchDockerHub(query: string): Promise<SearchDockerHubResult>;
   addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
+  removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;
