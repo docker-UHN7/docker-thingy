@@ -54,4 +54,21 @@ describe("removeVolumeMount", () => {
     expect(result.sourceText).toContain("logs:/logs");
     expect(result.sourceText).not.toContain("cache:/cache");
   });
+
+  it("does not throw when the mounted volume has no top-level `volumes:` declaration at all", () => {
+    // Plenty of hand-written compose files reference a named volume from a
+    // service without ever declaring it under a top-level `volumes:` key.
+    const source = "services:\n  api:\n    image: api:latest\n    volumes:\n      - undeclared:/data\n";
+
+    const result = removeVolumeMount(source, "api", "undeclared");
+    expect(result.sourceText).not.toContain("undeclared");
+    expect(result.sourceText).not.toContain("volumes:");
+  });
+
+  it("does not throw when a top-level `volumes:` key exists but isn't a map", () => {
+    const source = "services:\n  api:\n    image: api:latest\n    volumes:\n      - weird:/data\nvolumes: null\n";
+
+    const result = removeVolumeMount(source, "api", "weird");
+    expect(result.sourceText).not.toContain("weird:/data");
+  });
 });

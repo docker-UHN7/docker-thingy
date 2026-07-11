@@ -804,14 +804,23 @@ function isVolumeReferencedByAnyService(document: Document, volumeName: string):
 // Deletes a top-level named volume once nothing references it anymore,
 // including removing the whole `volumes:` key if that was the last entry -
 // leaving `volumes: {}` behind reads as "still has a volume" at a glance.
+// `volumeName` isn't guaranteed to actually have a top-level declaration -
+// plenty of hand-written compose files reference a named volume from a
+// service without declaring it under `volumes:` at all - so this has to
+// check the node is really a map before touching it; `deleteIn` throws
+// rather than no-op-ing when a path segment isn't a collection.
 function pruneVolumeIfOrphaned(document: Document, volumeName: string): void {
   if (isVolumeReferencedByAnyService(document, volumeName)) {
     return;
   }
 
-  document.deleteIn(["volumes", volumeName]);
   const volumesNode = document.get("volumes", true);
-  if (isMap(volumesNode) && volumesNode.items.length === 0) {
+  if (!isMap(volumesNode)) {
+    return;
+  }
+
+  document.deleteIn(["volumes", volumeName]);
+  if (volumesNode.items.length === 0) {
     document.deleteIn(["volumes"]);
   }
 }
