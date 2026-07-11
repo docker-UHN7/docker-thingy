@@ -10,5 +10,7 @@ export const IPC_CHANNELS = {
   RUN_PROJECT_ACTION: "app:run-project-action",
   BUILD_EVENT: "build:event",
   UPDATE_PROJECT_CONFIG_FILES: "app:update-project-config-files",
+  READ_SOURCE_FILE: "app:read-source-file",
+  SAVE_SOURCE_FILE: "app:save-source-file",
   SNAPSHOT_EVENT: "snapshot:event"
 } as const;

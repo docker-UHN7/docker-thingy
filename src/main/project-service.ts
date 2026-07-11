@@ -4,6 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import { join, dirname, basename, extname } from "node:path";
+import { parseDocument } from "yaml";
 import type {
   AppSettings,
   AppSnapshot,
@@ -14,6 +15,8 @@ import type {
   ProjectActionResult,
   ProjectDiagnostics,
   ProjectSummary,
+  ReadSourceFileResult,
+  SaveSourceFileResult,
   StatsSnapshotResult,
   ValidationOutcome
 } from "../shared/contracts";
@@ -30,6 +33,7 @@ import { loadDockerfileProject } from "./dockerfile-service";
 import { executeProjectAction } from "./operation-runner";
 import { isTimeoutError } from "./process-runner";
 import { isValidContainerRef, normalizeLogTail, sanitizeSettingsPatch } from "./validation";
+import { saveSourceAtomically } from "./atomic-save";
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
@@ -791,6 +795,113 @@ export class ProjectService {
       this.emitSnapshot();
 
       return this.snapshot;
+    });
+  }
+
+  // Only a path the project actually declared (its active configFiles or, for
+  // grouped folders, any sibling compose file discovered alongside it) may be
+  // read or written through the editor - the renderer only ever sends a
+  // projectId + path pair, and without this check that path could be steered
+  // at an arbitrary file on disk.
+  private resolveEditableFile(projectId: string, filePath: string): { project: ProjectSummary } | undefined {
+    const project = this.snapshot.projects.find((entry) => entry.id === projectId);
+    if (!project || project.access !== "editable" || project.runtimeKind !== "compose") {
+      return undefined;
+    }
+
+    const allowedFiles = new Set([...project.configFiles, ...(project.allConfigFiles ?? [])]);
+    if (!allowedFiles.has(filePath)) {
+      return undefined;
+    }
+
+    return { project };
+  }
+
+  async readComposeFile(projectId: string, filePath: string): Promise<ReadSourceFileResult> {
+    if (!this.resolveEditableFile(projectId, filePath)) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "That file is not part of this project." }
+      };
+    }
+
+    try {
+      const sourceText = await readFile(filePath, "utf8");
+      return { ok: true, data: { sourceText, hash: hashSource(sourceText) } };
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: "PROCESS_FAILED", message: error instanceof Error ? error.message : "Unable to read file." }
+      };
+    }
+  }
+
+  async saveComposeFile(
+    projectId: string,
+    filePath: string,
+    sourceText: string,
+    expectedHash: string
+  ): Promise<SaveSourceFileResult> {
+    return this.withLock(async () => {
+      const resolved = this.resolveEditableFile(projectId, filePath);
+      if (!resolved) {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: "That file is not part of this project." }
+        };
+      }
+
+      const parsed = parseDocument(sourceText);
+      if (parsed.errors.length > 0) {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: `Invalid YAML: ${parsed.errors[0]!.message}` }
+        };
+      }
+
+      const saveResult = await saveSourceAtomically(filePath, sourceText, expectedHash);
+      if (!saveResult.ok) {
+        return saveResult;
+      }
+
+      const { project } = resolved;
+      const mainPath = project.sourcePath ?? project.configFiles[0];
+      if (!mainPath) {
+        return { ok: true, data: { hash: saveResult.data.hash, snapshot: this.snapshot } };
+      }
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+      if (project.allConfigFiles) {
+        reloaded.allConfigFiles = project.allConfigFiles;
+      }
+      if (project.groupId) {
+        reloaded.groupId = project.groupId;
+        reloaded.groupLabel = project.groupLabel;
+      }
+
+      const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+      const sourceProjects = this.snapshot.projects.filter(
+        (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+      );
+      const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+      this.snapshot = {
+        ...this.snapshot,
+        projects: mergedProjects,
+        activeSourceSession:
+          this.snapshot.activeSourceSession?.sourcePath === mainPath
+            ? {
+                ...this.snapshot.activeSourceSession,
+                revision: this.snapshot.activeSourceSession.revision + 1,
+                lastKnownHash: filePath === mainPath ? saveResult.data.hash : this.snapshot.activeSourceSession.lastKnownHash,
+                diffPreview: "Saved from editor"
+              }
+            : this.snapshot.activeSourceSession
+      };
+      this.emitSnapshot();
+
+      return { ok: true, data: { hash: saveResult.data.hash, snapshot: this.snapshot } };
     });
   }
 
