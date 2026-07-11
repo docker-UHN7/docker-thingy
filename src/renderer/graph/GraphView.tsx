@@ -84,10 +84,6 @@ export function GraphView({
   // node is selected) can never clobber the current selection/dim state.
   useEffect(() => {
     let cancelled = false;
-    const initial = buildGraph(project);
-    setRawNodes(initial.nodes);
-    setRawEdges(initial.edges);
-    scheduleFitView();
 
     void layoutGraph(project, layoutDirection)
       .then((graph) => {
@@ -98,13 +94,11 @@ export function GraphView({
         setRawEdges(graph.edges);
         scheduleFitView();
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) {
           return;
         }
-        setRawNodes(initial.nodes);
-        setRawEdges(initial.edges);
-        scheduleFitView();
+        console.error("Graph layout failed", err);
       });
 
     return () => {
