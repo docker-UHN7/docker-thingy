@@ -23,6 +23,7 @@ import type {
   Result,
   SaveSourceFileResult,
   ServiceFieldsInput,
+  SnapshotMutationResult,
   StatsSnapshotResult,
   UpdateServiceFieldsResult,
   ValidationOutcome
@@ -41,7 +42,9 @@ import {
   hashSource,
   loadComposeProject,
   readServiceFields,
-  removeServiceFromCompose
+  removeDependencyEdge,
+  removeServiceFromCompose,
+  removeVolumeMount
 } from "./compose-service";
 import { loadDockerfileProject, validateImageTag } from "./dockerfile-service";
 import { executeProjectAction } from "./operation-runner";
@@ -1315,6 +1318,82 @@ export class ProjectService {
       this.emitSnapshot();
 
       return { ok: true, data: { snapshot: this.snapshot } };
+    });
+  }
+
+  // Shared tail end of every "mutate the base compose file, then reload"
+  // operation: hash-checked atomic save, reload the project, merge it back
+  // into the snapshot, and emit. Callers own their own validation and must
+  // already be inside withLock - this only exists to stop that reload/merge
+  // boilerplate from growing a sixth near-identical copy (see
+  // addServiceToProject/removeServiceFromProject/updateServiceFields above).
+  private async applyComposeMutationAndReload(
+    project: ProjectSummary,
+    mainPath: string,
+    mutate: (sourceText: string) => string
+  ): Promise<SnapshotMutationResult> {
+    const currentText = await readFile(mainPath, "utf8");
+    const nextText = mutate(currentText);
+
+    const saveResult = await saveSourceAtomically(mainPath, nextText, hashSource(currentText));
+    if (!saveResult.ok) {
+      return saveResult;
+    }
+
+    const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+    const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+    if (project.allConfigFiles) {
+      reloaded.allConfigFiles = project.allConfigFiles;
+    }
+    if (project.groupId) {
+      reloaded.groupId = project.groupId;
+      reloaded.groupLabel = project.groupLabel;
+    }
+
+    const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+    const sourceProjects = this.snapshot.projects.filter(
+      (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+    );
+    const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+    this.snapshot = {
+      ...this.snapshot,
+      projects: mergedProjects
+    };
+    this.emitSnapshot();
+
+    return { ok: true, data: { snapshot: this.snapshot } };
+  }
+
+  /** Click-to-disconnect for a depends_on edge in the graph view. */
+  async disconnectDependency(projectId: string, fromService: string, toService: string): Promise<SnapshotMutationResult> {
+    return this.withLock(async () => {
+      const context = this.resolveServiceEditContext(projectId, fromService);
+      if ("error" in context) {
+        return context.error;
+      }
+
+      return this.applyComposeMutationAndReload(
+        context.project,
+        context.mainPath,
+        (text) => removeDependencyEdge(text, fromService, toService).sourceText
+      );
+    });
+  }
+
+  /** Click-to-disconnect for a volume-mount edge in the graph view. */
+  async disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult> {
+    return this.withLock(async () => {
+      const context = this.resolveServiceEditContext(projectId, serviceName);
+      if ("error" in context) {
+        return context.error;
+      }
+
+      return this.applyComposeMutationAndReload(
+        context.project,
+        context.mainPath,
+        (text) => removeVolumeMount(text, serviceName, volumeName).sourceText
+      );
     });
   }
 

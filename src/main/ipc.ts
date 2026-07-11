@@ -12,6 +12,7 @@ import type {
   SaveSourceFileResult,
   SearchDockerHubResult,
   ServiceFieldsInput,
+  SnapshotMutationResult,
   UpdateServiceFieldsResult
 } from "../shared/contracts";
 import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
@@ -222,6 +223,36 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       }
 
       return projectService.updateServiceFields(projectId, serviceName, fields as ServiceFieldsInput);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.DISCONNECT_DEPENDENCY,
+    async (event, projectId: unknown, fromService: unknown, toService: unknown): Promise<SnapshotMutationResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof fromService !== "string" || typeof toService !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid disconnect-dependency request." } };
+      }
+
+      return projectService.disconnectDependency(projectId, fromService, toService);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.DISCONNECT_VOLUME_MOUNT,
+    async (event, projectId: unknown, serviceName: unknown, volumeName: unknown): Promise<SnapshotMutationResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof serviceName !== "string" || typeof volumeName !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid disconnect-volume-mount request." } };
+      }
+
+      return projectService.disconnectVolumeMount(projectId, serviceName, volumeName);
     }
   );
 

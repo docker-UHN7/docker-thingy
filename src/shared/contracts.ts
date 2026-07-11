@@ -434,6 +434,10 @@ export type ServiceFieldsInput = Partial<ServiceFields>;
 export type GetServiceFieldsResult = Result<{ fields: ServiceFields }>;
 export type UpdateServiceFieldsResult = Result<{ snapshot: AppSnapshot }>;
 
+// A project mutation that only ever needs to hand back the refreshed
+// snapshot - used by the graph view's click-to-disconnect actions.
+export type SnapshotMutationResult = Result<{ snapshot: AppSnapshot }>;
+
 export type PreloadApi = {
   // Routed through here rather than the web Clipboard API directly - the
   // Electron BrowserWindow denies every permission request/check (see
@@ -468,6 +472,8 @@ export type PreloadApi = {
     serviceName: string,
     fields: ServiceFieldsInput
   ): Promise<UpdateServiceFieldsResult>;
+  disconnectDependency(projectId: string, fromService: string, toService: string): Promise<SnapshotMutationResult>;
+  disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;

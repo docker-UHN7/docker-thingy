@@ -801,6 +801,21 @@ function isVolumeReferencedByAnyService(document: Document, volumeName: string):
   });
 }
 
+// Deletes a top-level named volume once nothing references it anymore,
+// including removing the whole `volumes:` key if that was the last entry -
+// leaving `volumes: {}` behind reads as "still has a volume" at a glance.
+function pruneVolumeIfOrphaned(document: Document, volumeName: string): void {
+  if (isVolumeReferencedByAnyService(document, volumeName)) {
+    return;
+  }
+
+  document.deleteIn(["volumes", volumeName]);
+  const volumesNode = document.get("volumes", true);
+  if (isMap(volumesNode) && volumesNode.items.length === 0) {
+    document.deleteIn(["volumes"]);
+  }
+}
+
 // Removes a service (e.g. from the "Add service" catalog, or hand-written)
 // from the compose file: deletes its own block, strips it out of every other
 // service's depends_on, and drops any top-level named volume that only this
@@ -835,9 +850,7 @@ export function removeServiceFromCompose(
   }
 
   for (const volumeName of ownVolumeNames) {
-    if (!isVolumeReferencedByAnyService(document, volumeName)) {
-      document.deleteIn(["volumes", volumeName]);
-    }
+    pruneVolumeIfOrphaned(document, volumeName);
   }
 
   return {
@@ -966,6 +979,44 @@ export function applyServiceFieldEdits(
       document.setIn([...servicePath, "environment"], fields.environment);
     }
   }
+
+  return { sourceText: String(document) };
+}
+
+// Backs the graph view's click-to-disconnect: removes one depends_on edge
+// (fromService -> dependencyService), reusing the same list/map-aware
+// removeDependency helper addServiceToCompose's connect flow and
+// removeServiceFromCompose's cleanup both already use.
+export function removeDependencyEdge(sourceText: string, fromService: string, dependencyService: string): { sourceText: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  removeDependency(document, fromService, dependencyService);
+  return { sourceText: String(document) };
+}
+
+// Backs the graph view's click-to-disconnect for a volume mount edge:
+// drops `volumeName` out of `serviceName`'s volumes list (short string form
+// only - see readServiceFields for why long-form mount entries are out of
+// scope for these graphical edits), then drops the top-level named volume
+// declaration too if no other service still mounts it.
+export function removeVolumeMount(sourceText: string, serviceName: string, volumeName: string): { sourceText: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  const volumesPath = ["services", serviceName, "volumes"];
+  const existing = document.getIn(volumesPath, true);
+
+  if (isSeq(existing)) {
+    const remaining = existing.items.filter((item) => {
+      const text = isScalar(item) ? String(item.value) : String(item);
+      return text.split(":")[0] !== volumeName;
+    });
+
+    if (remaining.length === 0) {
+      document.deleteIn(volumesPath);
+    } else {
+      existing.items = remaining;
+    }
+  }
+
+  pruneVolumeIfOrphaned(document, volumeName);
 
   return { sourceText: String(document) };
 }

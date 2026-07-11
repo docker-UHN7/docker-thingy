@@ -30,6 +30,10 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
   getServiceFields: (projectId, serviceName) => ipcRenderer.invoke(IPC_CHANNELS.GET_SERVICE_FIELDS, projectId, serviceName),
   updateServiceFields: (projectId, serviceName, fields) =>
     ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SERVICE_FIELDS, projectId, serviceName, fields),
+  disconnectDependency: (projectId, fromService, toService) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT_DEPENDENCY, projectId, fromService, toService),
+  disconnectVolumeMount: (projectId, serviceName, volumeName) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT_VOLUME_MOUNT, projectId, serviceName, volumeName),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {

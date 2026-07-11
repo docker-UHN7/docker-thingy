@@ -19,6 +19,8 @@ export const IPC_CHANNELS = {
   REMOVE_SERVICE_FROM_PROJECT: "app:remove-service-from-project",
   GET_SERVICE_FIELDS: "app:get-service-fields",
   UPDATE_SERVICE_FIELDS: "app:update-service-fields",
+  DISCONNECT_DEPENDENCY: "app:disconnect-dependency",
+  DISCONNECT_VOLUME_MOUNT: "app:disconnect-volume-mount",
   SNAPSHOT_EVENT: "snapshot:event",
   NETWORK_GET_TOPOLOGY: "network:get-topology",
   NETWORK_RUN_ACTION: "network:run-action",
