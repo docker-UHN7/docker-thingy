@@ -1247,6 +1247,31 @@ button {
   overflow: auto;
 }
 
+.detail-panel--editor {
+  width: min(640px, calc(100vw - 64px));
+}
+
+.compose-editor__cm-wrapper {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.compose-editor__cm-wrapper .cm-editor {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.85rem;
+}
+
+.compose-editor__cm-wrapper .cm-scroller {
+  line-height: 1.5;
+}
+
+.compose-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 .detail-list__row--column {
   flex-direction: column;
   align-items: stretch;
@@ -2350,7 +2375,8 @@ button {
   .workspace-panel--toolbar,
   .floating-panel--validate,
   .floating-panel--operation,
-  .detail-panel--overlay {
+  .detail-panel--overlay,
+  .detail-panel--editor {
     max-width: calc(100vw - 32px);
   }
 

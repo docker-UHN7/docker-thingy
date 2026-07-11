@@ -4,6 +4,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  FileCode2,
   Layers,
   LoaderCircle,
   MoonStar,
@@ -33,6 +34,7 @@ import { OperationProgressPanel } from "./OperationProgressPanel";
 import { ProjectActionToolbar } from "./ProjectActionToolbar";
 import { GraphView } from "./graph/GraphView";
 import { deriveProjectLifecycle } from "./project-state";
+import { SourceEditorPanel } from "./SourceEditorPanel";
 import { useAppStore } from "./store";
 import appLogo from "./assets/logo.png";
 
@@ -106,6 +108,7 @@ export function ProjectWorkspace({
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   // Toggling a compose-file checkbox round-trips through main (reload +
@@ -152,6 +155,7 @@ export function ProjectWorkspace({
   useEffect(() => {
     setOptimisticConfigFiles(undefined);
     setSavingConfigFiles(false);
+    setEditorOpen(false);
   }, [project?.id]);
 
   async function applyConfigFilesChange(newFiles: string[]) {
@@ -218,6 +222,7 @@ export function ProjectWorkspace({
       if (event.key === "Escape") {
         setSelectedNodeId(undefined);
         setSettingsOpen(false);
+        setEditorOpen(false);
       }
     }
 
@@ -369,6 +374,8 @@ export function ProjectWorkspace({
   const commonFileNamePrefix = longestCommonPrefix(
     (project.allConfigFiles ?? []).map((file) => file.split(/[/\\]/).pop() ?? file)
   );
+  const canEditSource =
+    project.access === "editable" && (project.runtimeKind === "compose" || project.runtimeKind === "dockerfile");
 
   return (
     <main className="workspace-screen">
@@ -388,6 +395,7 @@ export function ProjectWorkspace({
             setSelectedNodeId(nodeId);
             setDetailTab("overview");
             setSettingsOpen(false);
+            setEditorOpen(false);
           }}
           onClearSelection={() => setSelectedNodeId(undefined)}
         >
@@ -552,10 +560,31 @@ export function ProjectWorkspace({
               <div className="workspace-toolbar__divider" />
 
               <div className="workspace-toolbar__cluster">
+                {canEditSource ? (
+                  <button
+                    className="icon-button"
+                    aria-label="Edit source file"
+                    aria-pressed={editorOpen}
+                    onClick={() => {
+                      setEditorOpen((value) => !value);
+                      setSettingsOpen(false);
+                      setSelectedNodeId(undefined);
+                    }}
+                  >
+                    <FileCode2 size={16} />
+                  </button>
+                ) : null}
                 <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
                   {theme === "dark" ? <SunMedium size={16} /> : <MoonStar size={16} />}
                 </button>
-                <button className="icon-button" aria-label="Settings" onClick={() => setSettingsOpen((value) => !value)}>
+                <button
+                  className="icon-button"
+                  aria-label="Settings"
+                  onClick={() => {
+                    setSettingsOpen((value) => !value);
+                    setEditorOpen(false);
+                  }}
+                >
                   <Settings size={16} />
                 </button>
               </div>
@@ -573,7 +602,9 @@ export function ProjectWorkspace({
           </Panel>
 
           <Panel position="center-right" style={{ margin: 16 }}>
-            {settingsOpen && settings ? (
+            {editorOpen && canEditSource ? (
+              <SourceEditorPanel project={project} theme={theme} onClose={() => setEditorOpen(false)} />
+            ) : settingsOpen && settings ? (
               <aside className="floating-panel detail-panel detail-panel--overlay">
                 <div className="detail-panel__header">
                   <div>
