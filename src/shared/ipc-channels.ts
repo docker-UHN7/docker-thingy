@@ -12,5 +12,11 @@ export const IPC_CHANNELS = {
   UPDATE_PROJECT_CONFIG_FILES: "app:update-project-config-files",
   SNAPSHOT_EVENT: "snapshot:event",
   NETWORK_GET_TOPOLOGY: "network:get-topology",
-  NETWORK_RUN_ACTION: "network:run-action"
+  NETWORK_RUN_ACTION: "network:run-action",
+  REMOTE_ACCESS_GET_STATUS: "remote-access:get-status",
+  REMOTE_ACCESS_ENABLE: "remote-access:enable",
+  REMOTE_ACCESS_DISABLE: "remote-access:disable",
+  REMOTE_ACCESS_REGENERATE_TOKEN: "remote-access:regenerate-token",
+  REMOTE_ACCESS_SET_HOST: "remote-access:set-host",
+  COPY_TO_CLIPBOARD: "app:copy-to-clipboard"
 } as const;

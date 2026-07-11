@@ -13,6 +13,7 @@ export const PROCESS_LIMITS = {
   // Generous enough to cover an interactive polkit auth prompt (pkexec)
   // plus the (fast) privileged command itself.
   networkControlMs: 120_000,
+  tlsCertGenerationMs: 15_000,
   maxJsonBytes: 20 * 1024 * 1024,
   maxDiagnosticBytes: 10 * 1024 * 1024,
   maxLogBytes: 2 * 1024 * 1024
@@ -27,7 +28,8 @@ export type CommandCategory =
   | "docker-build"
   | "logs"
   | "stats"
-  | "network-control";
+  | "network-control"
+  | "tls-cert-generation";
 
 export type ExecCommandOptions = {
   cwd?: string;

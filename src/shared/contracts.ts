@@ -384,6 +384,12 @@ export type ProjectActionResult = Result<{
 }>;
 
 export type PreloadApi = {
+  // Routed through here rather than the web Clipboard API directly - the
+  // Electron BrowserWindow denies every permission request/check (see
+  // main.ts), which includes clipboard-write, so navigator.clipboard.writeText
+  // throws NotAllowedError there. Electron's own `clipboard` module (used by
+  // preload.ts's implementation) isn't gated by that check.
+  copyToClipboard(text: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   openSource(): Promise<OpenSourceResult>;
   openSourcePath(sourcePath: string): Promise<OpenSourceResult>;

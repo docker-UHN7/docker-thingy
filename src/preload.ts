@@ -1,9 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppSnapshot, OperationEvent, PreloadApi } from "./shared/contracts";
 import type { NetworkPreloadApi } from "./shared/network-contracts";
+import type { RemoteAccessPreloadApi } from "./shared/remote-access-contracts";
 import { IPC_CHANNELS } from "./shared/ipc-channels";
 
-const api: PreloadApi & NetworkPreloadApi = {
+const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
+  // Electron's `clipboard` module isn't part of the sandboxed preload
+  // allowlist (contextBridge, crashReporter, ipcRenderer, nativeImage,
+  // webFrame, webUtils only) - has to go through the main process instead.
+  copyToClipboard: (text) => ipcRenderer.invoke(IPC_CHANNELS.COPY_TO_CLIPBOARD, text),
   getSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SNAPSHOT),
   openSource: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE),
   openSourcePath: (sourcePath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE_PATH, sourcePath),
@@ -45,13 +50,18 @@ const api: PreloadApi & NetworkPreloadApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.SNAPSHOT_EVENT, handler);
   },
   getNetworkTopology: () => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_GET_TOPOLOGY),
-  runNetworkAction: (request) => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_RUN_ACTION, request)
+  runNetworkAction: (request) => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_RUN_ACTION, request),
+  getRemoteAccessStatus: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_GET_STATUS),
+  enableRemoteAccess: (port, host) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_ENABLE, port, host),
+  disableRemoteAccess: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_DISABLE),
+  regenerateRemoteAccessToken: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_REGENERATE_TOKEN),
+  setRemoteAccessHost: (host) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_SET_HOST, host)
 };
 
 contextBridge.exposeInMainWorld("dockerExplorer", api);
 
 declare global {
   interface Window {
-    dockerExplorer: PreloadApi & NetworkPreloadApi;
+    dockerExplorer: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi;
   }
 }
