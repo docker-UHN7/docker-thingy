@@ -43,6 +43,42 @@ describe("buildTopology", () => {
     expect(topology.warning).toBeUndefined();
   });
 
+  it("composes a container-link actionTargetId as containerId|mac so a multi-homed container's edges each target the right interface", () => {
+    const containers: Inspected[] = [
+      container({
+        Id: "c1",
+        NetworkSettings: {
+          Networks: {
+            bridge: { MacAddress: "02:42:ac:11:00:02" },
+            custom: { MacAddress: "02:42:ac:12:00:03" }
+          }
+        }
+      })
+    ];
+    const dockerNetworks: DockerNetworkSummary[] = [
+      { id: "abc123", name: "bridge", driver: "bridge" },
+      { id: "def456", name: "custom", driver: "bridge" }
+    ];
+
+    const topology = buildTopology(containers, dockerNetworks, [], [], [], true);
+    const attachmentEdges = topology.edges.filter((edge) => edge.kind === "attachment");
+
+    expect(attachmentEdges).toHaveLength(2);
+    expect(attachmentEdges.map((edge) => edge.actionTargetId).sort()).toEqual([
+      "c1|02:42:ac:11:00:02",
+      "c1|02:42:ac:12:00:03"
+    ]);
+  });
+
+  it("falls back to a bare container id when a network attachment has no recorded MAC", () => {
+    const containers: Inspected[] = [container({ Id: "c1", NetworkSettings: { Networks: { bridge: {} } } })];
+    const dockerNetworks: DockerNetworkSummary[] = [{ id: "abc123", name: "bridge", driver: "bridge" }];
+
+    const topology = buildTopology(containers, dockerNetworks, [], [], [], true);
+
+    expect(topology.edges.find((edge) => edge.kind === "attachment")?.actionTargetId).toBe("c1");
+  });
+
   it("resolves the default bridge network to docker0 and a user-defined one to br-<id[:12]>", () => {
     const containers: Inspected[] = [
       container({ Id: "c1", NetworkSettings: { Networks: { bridge: {} } } }),
@@ -76,7 +112,7 @@ describe("buildTopology", () => {
         name: "splunk-lab",
         uuid: "e218c8f4-7601-46a4-a963-85aee31e62cd",
         running: false,
-        interfaces: [{ mac: "52:54:00:fc:c6:27", sourceNetwork: "default" }]
+        interfaces: [{ mac: "52:54:00:fc:c6:27", sourceNetwork: "default", linkState: "up" }]
       }
     ];
     const vmNetworks: VmNetwork[] = [{ name: "default", bridge: "virbr0", active: true, forwardMode: "nat" }];
@@ -107,7 +143,7 @@ describe("buildTopology", () => {
         name: "bridged-vm",
         uuid: "uuid-2",
         running: true,
-        interfaces: [{ mac: "aa:bb:cc:dd:ee:ff", sourceBridge: "br-lan" }]
+        interfaces: [{ mac: "aa:bb:cc:dd:ee:ff", sourceBridge: "br-lan", linkState: "up" }]
       }
     ];
 
@@ -122,5 +158,68 @@ describe("buildTopology", () => {
     const topology = buildTopology([], [], [], [], [], false);
     expect(topology.warning).toMatch(/libvirt/i);
     expect(topology.nodes).toHaveLength(0);
+  });
+});
+
+describe("buildTopology - control state folding", () => {
+  it("forces a container-link edge down when the state file records an override, even though discovery always assumes up", () => {
+    const containers: Inspected[] = [
+      container({ Id: "c1", NetworkSettings: { Networks: { bridge: { MacAddress: "02:42:ac:11:00:02" } } } })
+    ];
+    const dockerNetworks: DockerNetworkSummary[] = [{ id: "abc123", name: "bridge", driver: "bridge" }];
+
+    const topology = buildTopology(containers, dockerNetworks, [], [], [], true, {
+      containerLinks: { "c1|02:42:ac:11:00:02": "down" },
+      bridgeForwards: {},
+      bridgeLinks: {}
+    });
+
+    expect(topology.edges.find((edge) => edge.kind === "attachment")?.state).toBe("down");
+  });
+
+  it("forces a bridge's uplink down when the state file records a deny, overriding the discovered default", () => {
+    const dockerNetworks: DockerNetworkSummary[] = [{ id: "abc123", name: "bridge", driver: "bridge" }];
+
+    const topology = buildTopology([], dockerNetworks, [], [], [], true, {
+      containerLinks: {},
+      bridgeForwards: { docker0: "deny" },
+      bridgeLinks: {}
+    });
+
+    const uplinkEdge = topology.edges.find((edge) => edge.kind === "uplink");
+    expect(uplinkEdge?.state).toBe("down");
+    expect(topology.nodes.find((node) => node.kind === "uplink")?.status).toBe("down");
+  });
+
+  it("synthesizes an interconnect edge between two existing bridges from the state file - their only discovery path", () => {
+    const dockerNetworks: DockerNetworkSummary[] = [
+      { id: "abc123", name: "bridge", driver: "bridge" },
+      { id: "def456", name: "custom", driver: "bridge" }
+    ];
+
+    const topology = buildTopology([], dockerNetworks, [], [], [], true, {
+      containerLinks: {},
+      bridgeForwards: {},
+      bridgeLinks: { "br-def456|docker0": "connected" }
+    });
+
+    const interconnectEdge = topology.edges.find((edge) => edge.kind === "interconnect");
+    expect(interconnectEdge).toMatchObject({
+      from: "bridge:br-def456",
+      to: "bridge:docker0",
+      state: "up",
+      verb: "bridge-link",
+      actionTargetId: "br-def456|docker0"
+    });
+  });
+
+  it("skips a stale bridgeLinks entry referencing a bridge that no longer exists", () => {
+    const topology = buildTopology([], [], [], [], [], true, {
+      containerLinks: {},
+      bridgeForwards: {},
+      bridgeLinks: { "docker0|virbr0": "connected" }
+    });
+
+    expect(topology.edges.find((edge) => edge.kind === "interconnect")).toBeUndefined();
   });
 });

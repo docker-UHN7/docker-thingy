@@ -12,6 +12,9 @@ export type VmInterface = {
   model?: string | undefined;
   sourceNetwork?: string | undefined;
   sourceBridge?: string | undefined;
+  // libvirt omits <link> entirely when the interface has never been toggled
+  // down - absence means up, same as the element's own documented default.
+  linkState: "up" | "down";
 };
 
 export type VmDomain = {
@@ -42,7 +45,8 @@ const InterfaceXmlSchema = z.looseObject({
       "@_bridge": z.string().optional()
     })
     .optional(),
-  model: z.looseObject({ "@_type": z.string().optional() }).optional()
+  model: z.looseObject({ "@_type": z.string().optional() }).optional(),
+  link: z.looseObject({ "@_state": z.string().optional() }).optional()
 });
 
 const DomainXmlSchema = z.looseObject({
@@ -114,7 +118,8 @@ export function parseDomainXml(xml: string, fallbackName: string, running: boole
         mac,
         model: entry.model?.["@_type"],
         sourceNetwork: entry.source?.["@_network"],
-        sourceBridge: entry.source?.["@_bridge"]
+        sourceBridge: entry.source?.["@_bridge"],
+        linkState: entry.link?.["@_state"] === "down" ? "down" : "up"
       }
     ];
   });

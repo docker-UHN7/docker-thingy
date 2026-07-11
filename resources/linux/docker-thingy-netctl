@@ -10,48 +10,115 @@
 # invoke pkexec with this path, so it must not trust its caller.
 #
 # Verbs:
-#   container-link <pid> up|down     - toggle a container's host-side veth
-#   bridge-forward <bridge> allow|deny - allow/block a bridge's forwarding
-#                                        to any other interface
+#   container-link <pid> <container-id> <mac> up|down
+#     - toggle one specific interface (identified by MAC, not a hardcoded
+#       name - a container can be attached to multiple networks) of a
+#       container's host-side veth
+#   bridge-forward <bridge> allow|deny
+#     - allow/block a bridge's forwarding to any other interface
+#   bridge-link <bridge-a> <bridge-b> connect|disconnect
+#     - allow/block forwarding between two specific bridges (e.g. letting an
+#       otherwise-isolated network specifically reach a fake-DNS network)
+#
+# All three verbs record their result in a small state file so it survives
+# being re-read on every topology poll - see write_state_field below for why.
 
 set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || { echo "netctl: jq is required but not installed" >&2; exit 1; }
 
 PID_PATTERN='^[0-9]+$'
 STATE_PATTERN='^(up|down)$'
 FORWARD_STATE_PATTERN='^(allow|deny)$'
+LINK_STATE_PATTERN='^(connect|disconnect)$'
+# Mirrors CONTAINER_REF_PATTERN in src/main/validation.ts exactly.
+CONTAINER_ID_PATTERN='^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$'
+MAC_PATTERN='^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$'
 # Linux interface names are capped at IFNAMSIZ-1 = 15 chars.
 IFACE_PATTERN='^[a-zA-Z0-9_.-]{1,15}$'
 
 NFT_TABLE="inet docker-thingy"
 NFT_CHAIN="forward"
 
+# /run is a tmpfs - these states have the same "resets on reboot" lifetime as
+# the veth-down/nft-rule state they're recording, so that's the right place
+# for them, not somewhere persistent.
+STATE_DIR="/run/docker-thingy"
+STATE_FILE="$STATE_DIR/state.json"
+EMPTY_STATE='{"containerLinks":{},"bridgeForwards":{},"bridgeLinks":{}}'
+
 fail() {
   echo "netctl: $1" >&2
   exit 1
 }
 
+# Read-modify-write one field of the state file, atomically (temp file +
+# rename in the same directory). This file is root-owned but world-readable
+# (0644) - it's the only way the unprivileged discovery path can know a
+# privileged toggle's result on the *next* poll, since reading actual
+# veth/nftables state needs the same root privilege as setting it.
+# write_state_field <category> <key> <value-or-empty-to-delete>
+write_state_field() {
+  local category="$1"
+  local key="$2"
+  local value="$3"
+
+  mkdir -p "$STATE_DIR"
+  chmod 0755 "$STATE_DIR"
+
+  local current tmp
+  current=$(cat "$STATE_FILE" 2>/dev/null || true)
+  [ -n "$current" ] || current="$EMPTY_STATE"
+  tmp=$(mktemp "$STATE_DIR/.state.XXXXXX")
+
+  if [ -n "$value" ]; then
+    jq --arg cat "$category" --arg key "$key" --arg val "$value" \
+      '.[$cat][$key] = $val' <<<"$current" >"$tmp"
+  else
+    jq --arg cat "$category" --arg key "$key" \
+      'del(.[$cat][$key])' <<<"$current" >"$tmp"
+  fi
+
+  chmod 0644 "$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
+
 cmd_container_link() {
   local pid="$1"
-  local state="$2"
+  local container_id="$2"
+  local mac="$3"
+  local state="$4"
 
   [[ "$pid" =~ $PID_PATTERN ]] || fail "invalid pid: $pid"
+  [[ "$container_id" =~ $CONTAINER_ID_PATTERN ]] || fail "invalid container id: $container_id"
+  [[ "$mac" =~ $MAC_PATTERN ]] || fail "invalid mac: $mac"
   [[ "$state" =~ $STATE_PATTERN ]] || fail "invalid state: $state"
   [ -d "/proc/$pid/ns" ] || fail "no such process: $pid"
 
-  # Resolve the container-side eth0's peer ifindex, then find which host
-  # interface owns that ifindex - that's the veth end we can toggle.
-  local iface_line peer_ifindex veth_name
-  iface_line=$(nsenter --net="/proc/$pid/ns/net" -- ip -o link show eth0 2>/dev/null) \
+  # Find the interface (inside the container's netns) whose MAC matches the
+  # specific network attachment we were asked to toggle - not just "eth0",
+  # since a multi-homed container has one interface per attached network.
+  local match_line peer_ifindex veth_name
+  match_line=$(nsenter --net="/proc/$pid/ns/net" -- ip -o link show 2>/dev/null \
+    | awk -v mac="${mac,,}" 'tolower($0) ~ ("link/ether " mac) {print; exit}') \
     || fail "could not inspect network namespace for pid $pid"
+  [ -n "$match_line" ] || fail "no interface with mac $mac found for pid $pid"
 
-  peer_ifindex=$(sed -n 's/.*@if\([0-9]\+\).*/\1/p' <<<"$iface_line")
-  [ -n "$peer_ifindex" ] || fail "could not resolve veth peer ifindex for pid $pid"
+  peer_ifindex=$(sed -n 's/.*@if\([0-9]\+\).*/\1/p' <<<"$match_line")
+  [ -n "$peer_ifindex" ] || fail "could not resolve veth peer ifindex for mac $mac"
 
   veth_name=$(ip -o link show | awk -F': ' -v idx="$peer_ifindex" '$1==idx {split($2,parts,"@"); print parts[1]}')
   [ -n "$veth_name" ] || fail "could not resolve host veth for ifindex $peer_ifindex"
   [[ "$veth_name" =~ $IFACE_PATTERN ]] || fail "resolved veth name looks invalid: $veth_name"
 
   ip link set dev "$veth_name" "$state"
+
+  local state_key="${container_id}|${mac}"
+  if [ "$state" = "down" ]; then
+    write_state_field containerLinks "$state_key" "down"
+  else
+    write_state_field containerLinks "$state_key" ""
+  fi
 }
 
 ensure_nft_table() {
@@ -60,11 +127,15 @@ ensure_nft_table() {
     || nft add chain $NFT_TABLE $NFT_CHAIN '{ type filter hook forward priority -1 ; }'
 }
 
-remove_existing_bridge_rule() {
-  local bridge="$1"
+# Deletes every rule in our chain whose comment matches the given tag -
+# shared by bridge-forward (tag "docker-thingy:<bridge>") and bridge-link
+# (tag "docker-thingy:link:<a>:<b>"), which never collide since the "link:"
+# segment keeps the two tag namespaces structurally distinct.
+remove_tagged_rules() {
+  local tag="$1"
   local handle
   handle=$(nft -a list chain $NFT_TABLE $NFT_CHAIN 2>/dev/null \
-    | awk -v tag="docker-thingy:$bridge" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i=="handle") print $(i+1) }')
+    | awk -v tag="$tag" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i=="handle") print $(i+1) }')
 
   for h in $handle; do
     nft delete rule $NFT_TABLE $NFT_CHAIN handle "$h"
@@ -79,7 +150,7 @@ cmd_bridge_forward() {
   [[ "$state" =~ $FORWARD_STATE_PATTERN ]] || fail "invalid state: $state"
 
   ensure_nft_table
-  remove_existing_bridge_rule "$bridge"
+  remove_tagged_rules "docker-thingy:$bridge"
 
   if [ "$state" = "deny" ]; then
     # nft's own grammar (not bash's) requires the comment value to be a
@@ -88,23 +159,70 @@ cmd_bridge_forward() {
     # escaped \" here nft receives an unquoted `docker-thingy:$bridge` and
     # chokes on the bare colon.
     nft add rule $NFT_TABLE $NFT_CHAIN iifname "$bridge" oifname != "$bridge" drop comment \"docker-thingy:$bridge\"
+    write_state_field bridgeForwards "$bridge" "deny"
+  else
+    # "allow" just leaves the rule removed - normal Docker/libvirt forwarding applies.
+    write_state_field bridgeForwards "$bridge" ""
   fi
-  # "allow" just leaves the rule removed - normal Docker/libvirt forwarding applies.
+}
+
+cmd_bridge_link() {
+  local bridge_a="$1"
+  local bridge_b="$2"
+  local state="$3"
+
+  [[ "$bridge_a" =~ $IFACE_PATTERN ]] || fail "invalid bridge name: $bridge_a"
+  [[ "$bridge_b" =~ $IFACE_PATTERN ]] || fail "invalid bridge name: $bridge_b"
+  [[ "$state" =~ $LINK_STATE_PATTERN ]] || fail "invalid state: $state"
+  [ "$bridge_a" != "$bridge_b" ] || fail "cannot link a bridge to itself"
+
+  # Canonical order so the tag/state-key is independent of which bridge was
+  # dragged onto which.
+  local first second
+  if [[ "$bridge_a" < "$bridge_b" ]]; then
+    first="$bridge_a"
+    second="$bridge_b"
+  else
+    first="$bridge_b"
+    second="$bridge_a"
+  fi
+
+  local tag="docker-thingy:link:${first}:${second}"
+
+  ensure_nft_table
+  remove_tagged_rules "$tag"
+
+  if [ "$state" = "connect" ]; then
+    # Inserted (prepended), not appended: a bridge-forward "deny" rule for
+    # either bridge sits at the end of this same chain and would otherwise
+    # be evaluated first, shadowing this specific allow. Insert guarantees
+    # the specific allow always takes precedence over the general deny,
+    # regardless of which action was applied first.
+    nft insert rule $NFT_TABLE $NFT_CHAIN iifname "$first" oifname "$second" accept comment \"$tag\"
+    nft insert rule $NFT_TABLE $NFT_CHAIN iifname "$second" oifname "$first" accept comment \"$tag\"
+    write_state_field bridgeLinks "${first}|${second}" "connected"
+  else
+    write_state_field bridgeLinks "${first}|${second}" ""
+  fi
 }
 
 main() {
   local verb="${1:-}"
   case "$verb" in
     container-link)
-      [ "$#" -eq 3 ] || fail "usage: container-link <pid> up|down"
-      cmd_container_link "$2" "$3"
+      [ "$#" -eq 5 ] || fail "usage: container-link <pid> <container-id> <mac> up|down"
+      cmd_container_link "$2" "$3" "$4" "$5"
       ;;
     bridge-forward)
       [ "$#" -eq 3 ] || fail "usage: bridge-forward <bridge> allow|deny"
       cmd_bridge_forward "$2" "$3"
       ;;
+    bridge-link)
+      [ "$#" -eq 4 ] || fail "usage: bridge-link <bridge-a> <bridge-b> connect|disconnect"
+      cmd_bridge_link "$2" "$3" "$4"
+      ;;
     *)
-      fail "unknown verb: $verb (expected container-link or bridge-forward)"
+      fail "unknown verb: $verb (expected container-link, bridge-forward, or bridge-link)"
       ;;
   esac
 }

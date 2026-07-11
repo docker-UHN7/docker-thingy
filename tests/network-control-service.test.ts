@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { NetworkTopology } from "../src/shared/network-contracts";
-import { applyOptimisticEdgeState } from "../src/main/topology-service";
-import { parseVmLinkTargetId } from "../src/main/network-control-service";
+import { parseBridgeLinkTargetId, parseContainerLinkTargetId, parseVmLinkTargetId } from "../src/main/network-control-service";
 
 describe("parseVmLinkTargetId", () => {
   it("splits on the last '|' so a domain name containing '|' still parses (MAC never does)", () => {
@@ -20,65 +18,31 @@ describe("parseVmLinkTargetId", () => {
   });
 });
 
-describe("applyOptimisticEdgeState", () => {
-  const topology: NetworkTopology = {
-    nodes: [
-      { id: "bridge:docker0", kind: "bridge", name: "docker0", status: "up" },
-      { id: "uplink:docker0", kind: "uplink", name: "Internet / LAN", status: "up" }
-    ],
-    edges: [
-      {
-        id: "uplink:docker0",
-        from: "bridge:docker0",
-        to: "uplink:docker0",
-        kind: "uplink",
-        state: "up",
-        controllable: true,
-        verb: "bridge-forward",
-        actionTargetId: "docker0"
-      }
-    ],
-    checkedAt: "2026-01-01T00:00:00.000Z",
-    controlAgentAvailable: true
-  };
-
-  it("patches the matching edge's state and its uplink node's status", () => {
-    const patched = applyOptimisticEdgeState(topology, "bridge-forward", "docker0", "down");
-
-    expect(patched.edges[0]?.state).toBe("down");
-    expect(patched.nodes.find((node) => node.kind === "uplink")?.status).toBe("down");
+describe("parseContainerLinkTargetId", () => {
+  it("splits a containerId|mac target id", () => {
+    expect(parseContainerLinkTargetId("abc123|52:54:00:fc:c6:27")).toEqual({
+      containerId: "abc123",
+      mac: "52:54:00:fc:c6:27"
+    });
   });
 
-  it("leaves the topology untouched when no edge matches", () => {
-    const patched = applyOptimisticEdgeState(topology, "container-link", "some-other-id", "down");
-    expect(patched).toEqual(topology);
+  it("returns an undefined mac (not a throw) for a bare container id, so the caller can surface a domain-specific error", () => {
+    expect(parseContainerLinkTargetId("abc123")).toEqual({
+      containerId: "abc123",
+      mac: undefined
+    });
+  });
+});
+
+describe("parseBridgeLinkTargetId", () => {
+  it("splits a bridgeA|bridgeB target id", () => {
+    expect(parseBridgeLinkTargetId("docker0|virbr0")).toEqual({
+      bridgeA: "docker0",
+      bridgeB: "virbr0"
+    });
   });
 
-  it("does not patch node status for a container-link/vm-link toggle (only bridge-forward affects an uplink node)", () => {
-    const containerTopology: NetworkTopology = {
-      nodes: [
-        { id: "container:c1", kind: "container", name: "web", status: "up" },
-        { id: "bridge:docker0", kind: "bridge", name: "docker0", status: "up" }
-      ],
-      edges: [
-        {
-          id: "attach:container:c1:docker0",
-          from: "container:c1",
-          to: "bridge:docker0",
-          kind: "attachment",
-          state: "up",
-          controllable: true,
-          verb: "container-link",
-          actionTargetId: "c1"
-        }
-      ],
-      checkedAt: "2026-01-01T00:00:00.000Z",
-      controlAgentAvailable: true
-    };
-
-    const patched = applyOptimisticEdgeState(containerTopology, "container-link", "c1", "down");
-
-    expect(patched.edges[0]?.state).toBe("down");
-    expect(patched.nodes.find((node) => node.kind === "container")?.status).toBe("up");
+  it("throws on a target id with no separator", () => {
+    expect(() => parseBridgeLinkTargetId("no-separator-here")).toThrow();
   });
 });

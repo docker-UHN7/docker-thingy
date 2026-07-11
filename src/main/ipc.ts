@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, ipcMain, shell } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import type {
   AddServiceInput,
@@ -13,11 +13,20 @@ import type {
 } from "../shared/contracts";
 import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
 import { NetworkActionRequestSchema } from "../shared/network-contracts";
+import type { RemoteAccessStatus } from "../shared/remote-access-contracts";
+import { RemoteAccessEnableRequestSchema, RemoteAccessSetHostRequestSchema } from "../shared/remote-access-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { ProjectService } from "./project-service";
 import { searchDockerHub } from "./docker-hub-service";
 import { getNetworkTopology } from "./topology-service";
 import { runNetworkAction } from "./network-control-service";
+import {
+  disableRemoteAccess,
+  enableRemoteAccess,
+  getRemoteAccessStatus,
+  regenerateRemoteAccessToken,
+  setRemoteAccessHost
+} from "./remote-access-service";
 
 function isTrustedSender(mainWindow: BrowserWindow, event: IpcMainInvokeEvent): boolean {
   if (event.sender.id !== mainWindow.webContents.id) {
@@ -275,6 +284,75 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
     }
 
     return runNetworkAction(parsed.data);
+  });
+
+  // Deliberately no equivalent handlers exist on the remote-access HTTP
+  // server (see remote-access-service.ts) - these four stay local-only so a
+  // leaked token can never be used to re-enable/reconfigure/re-read its own
+  // exposure.
+  ipcMain.handle(IPC_CHANNELS.REMOTE_ACCESS_GET_STATUS, async (event): Promise<RemoteAccessStatus> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return getRemoteAccessStatus();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.REMOTE_ACCESS_ENABLE, async (event, port: unknown, host: unknown): Promise<RemoteAccessStatus> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    const parsed = RemoteAccessEnableRequestSchema.safeParse({ port, host: host === "" ? undefined : host });
+    if (!parsed.success) {
+      throw new Error("Invalid port number or host.");
+    }
+
+    return enableRemoteAccess(parsed.data.port, projectService, parsed.data.host, app.getPath("userData"));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.REMOTE_ACCESS_DISABLE, async (event): Promise<RemoteAccessStatus> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return disableRemoteAccess();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.REMOTE_ACCESS_REGENERATE_TOKEN, async (event): Promise<RemoteAccessStatus> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return regenerateRemoteAccessToken();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.REMOTE_ACCESS_SET_HOST, async (event, host: unknown): Promise<RemoteAccessStatus> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    const parsed = RemoteAccessSetHostRequestSchema.safeParse({ host });
+    if (!parsed.success) {
+      throw new Error("Invalid host.");
+    }
+
+    return setRemoteAccessHost(parsed.data.host);
+  });
+
+  // Electron's `clipboard` module isn't reachable from a sandboxed preload
+  // script (see webPreferences.sandbox: true in main.ts) - it has to be
+  // called here in the main process instead.
+  ipcMain.handle(IPC_CHANNELS.COPY_TO_CLIPBOARD, async (event, text: unknown): Promise<void> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    if (typeof text !== "string") {
+      throw new Error("Invalid clipboard text.");
+    }
+
+    clipboard.writeText(text);
   });
 }
 

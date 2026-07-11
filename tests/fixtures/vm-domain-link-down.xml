@@ -1,0 +1,12 @@
+<domain type='kvm'>
+  <name>quarantined-vm</name>
+  <uuid>22222222-3333-4444-5555-666666666666</uuid>
+  <devices>
+    <interface type='network'>
+      <mac address='52:54:00:de:ad:be'/>
+      <source network='default'/>
+      <model type='virtio'/>
+      <link state='down'/>
+    </interface>
+  </devices>
+</domain>

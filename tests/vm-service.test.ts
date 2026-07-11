@@ -17,9 +17,19 @@ describe("parseDomainXml", () => {
       running: true
     });
     expect(domain?.interfaces).toEqual([
-      { mac: "52:54:00:fc:c6:27", model: "virtio", sourceNetwork: "default", sourceBridge: undefined },
-      { mac: "52:54:00:aa:bb:cc", model: "virtio", sourceNetwork: undefined, sourceBridge: "br-lan" }
+      { mac: "52:54:00:fc:c6:27", model: "virtio", sourceNetwork: "default", sourceBridge: undefined, linkState: "up" },
+      { mac: "52:54:00:aa:bb:cc", model: "virtio", sourceNetwork: undefined, sourceBridge: "br-lan", linkState: "up" }
     ]);
+  });
+
+  it("treats an absent <link> element as up (libvirt's own documented default)", () => {
+    const domain = parseDomainXml(fixture("vm-domain-single-interface.xml"), "fallback", false);
+    expect(domain?.interfaces[0]?.linkState).toBe("up");
+  });
+
+  it("reads an explicit <link state='down'/> element", () => {
+    const domain = parseDomainXml(fixture("vm-domain-link-down.xml"), "fallback", true);
+    expect(domain?.interfaces[0]?.linkState).toBe("down");
   });
 
   it("wraps a single interface in an array just like multiple interfaces", () => {

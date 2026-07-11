@@ -112,11 +112,7 @@ export function ProjectWorkspace({
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-<<<<<<< HEAD
-=======
   const [addServiceOpen, setAddServiceOpen] = useState(false);
-  const [dismissedValidationOperationId, setDismissedValidationOperationId] = useState<string | undefined>();
->>>>>>> 1c94fb6bcbf1022f3cc655568ba81614264c0143
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   // Toggling a compose-file checkbox round-trips through main (reload +
@@ -602,20 +598,6 @@ export function ProjectWorkspace({
               <div className="workspace-toolbar__divider" />
 
               <div className="workspace-toolbar__cluster">
-<<<<<<< HEAD
-=======
-                <button
-                  className="button button--secondary"
-                  onClick={() => setLayoutDirection((current) => (current === "RIGHT" ? "DOWN" : "RIGHT"))}
-                >
-                  <LayoutPanelTop size={16} />
-                  <span>{layoutDirection === "RIGHT" ? "Left to right" : "Top to bottom"}</span>
-                </button>
-              </div>
-
-              <div className="workspace-toolbar__divider" />
-
-              <div className="workspace-toolbar__cluster">
                 {canAddService ? (
                   <button
                     className="button button--secondary"
@@ -631,7 +613,6 @@ export function ProjectWorkspace({
                     <span>Add service</span>
                   </button>
                 ) : null}
->>>>>>> 1c94fb6bcbf1022f3cc655568ba81614264c0143
                 {canEditSource ? (
                   <button
                     className="icon-button"

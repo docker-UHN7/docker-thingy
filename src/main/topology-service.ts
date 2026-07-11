@@ -1,6 +1,7 @@
 import * as z from "zod";
+import { readFile } from "node:fs/promises";
 import type { ContainerInspectSchema } from "../shared/contracts";
-import type { NetworkActionVerb, NetworkTopology, TopologyEdge, TopologyNode } from "../shared/network-contracts";
+import type { NetworkTopology, TopologyEdge, TopologyNode } from "../shared/network-contracts";
 import {
   dockerNetworkBridgeName,
   listAllContainers,
@@ -12,6 +13,40 @@ import {
 import { isLibvirtAvailable, listVmDomains, listVmNetworks, type VmDomain, type VmNetwork } from "./vm-service";
 import { isPolkitAgentRunning } from "./polkit-service";
 import { PROCESS_LIMITS, execCommand } from "./process-runner";
+
+// Written by resources/linux/docker-thingy-netctl (root, 0644) after every
+// successful container-link/bridge-forward/bridge-link mutation. /run is a
+// tmpfs - these overrides have the same "resets on reboot" lifetime as the
+// veth/nftables state they're recording. Reading it is the *only* way this
+// unprivileged discovery path can reflect a privileged toggle's result on
+// the next poll - see readControlState below for why that matters.
+const CONTROL_STATE_PATH = "/run/docker-thingy/state.json";
+
+const ControlStateSchema = z.object({
+  containerLinks: z.record(z.string(), z.string()).default({}),
+  bridgeForwards: z.record(z.string(), z.string()).default({}),
+  bridgeLinks: z.record(z.string(), z.string()).default({})
+});
+
+export type ControlState = z.infer<typeof ControlStateSchema>;
+
+const EMPTY_CONTROL_STATE: ControlState = { containerLinks: {}, bridgeForwards: {}, bridgeLinks: {} };
+
+/**
+ * A missing file (nothing has ever been toggled on this host) or a
+ * corrupt/unreadable one are both treated as "no overrides recorded," not an
+ * error - discovery should never fail just because this side-channel isn't
+ * there yet.
+ */
+export async function readControlState(): Promise<ControlState> {
+  try {
+    const raw = await readFile(CONTROL_STATE_PATH, "utf8");
+    const parsed = ControlStateSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : EMPTY_CONTROL_STATE;
+  } catch {
+    return EMPTY_CONTROL_STATE;
+  }
+}
 
 const IpLinkRecordSchema = z.looseObject({
   ifname: z.string(),
@@ -67,6 +102,18 @@ function getOrCreateBridge(map: Map<string, BridgeAccumulator>, name: string): B
 }
 
 /**
+ * container-link's targetId is `${containerId}|${mac}` (mirrors vm-link's
+ * `${domain}|${mac}` pattern) so the privileged helper can target the right
+ * interface on a multi-homed container instead of assuming eth0. Falls back
+ * to a bare container id on the rare inspect output where a network
+ * attachment has no MAC recorded - network-control-service.ts treats that
+ * case as "can't determine which interface" rather than guessing.
+ */
+function containerLinkTargetId(containerId: string, mac: string | undefined): string {
+  return mac ? `${containerId}|${mac}` : containerId;
+}
+
+/**
  * Pure merge step, split out from `getNetworkTopology` specifically so it's
  * unit-testable against fixture data without shelling out to
  * docker/virsh/ip. `getNetworkTopology` (below) is the only impure caller.
@@ -77,7 +124,8 @@ export function buildTopology(
   hostBridges: HostBridge[],
   vmDomains: VmDomain[],
   vmNetworks: VmNetwork[],
-  libvirtAvailable: boolean
+  libvirtAvailable: boolean,
+  controlState: ControlState = EMPTY_CONTROL_STATE
 ): Omit<NetworkTopology, "checkedAt" | "controlAgentAvailable"> {
   const nodes: TopologyNode[] = [];
   const edges: TopologyEdge[] = [];
@@ -130,15 +178,16 @@ export function buildTopology(
       }
 
       getOrCreateBridge(bridges, bridgeName);
+      const actionTargetId = containerLinkTargetId(runtime.id, network.macAddress);
       edges.push({
         id: `attach:${nodeId}:${bridgeName}`,
         from: nodeId,
         to: `bridge:${bridgeName}`,
         kind: "attachment",
-        state: "up",
+        state: controlState.containerLinks[actionTargetId] ? "down" : "up",
         controllable: true,
         verb: "container-link",
-        actionTargetId: runtime.id
+        actionTargetId
       });
     }
   }
@@ -167,7 +216,7 @@ export function buildTopology(
         from: nodeId,
         to: `bridge:${bridgeName}`,
         kind: "attachment",
-        state: "up",
+        state: iface.linkState,
         controllable: true,
         verb: "vm-link",
         actionTargetId: `${domain.name}|${iface.mac}`
@@ -190,8 +239,10 @@ export function buildTopology(
     // Docker bridge networks masquerade to the outside by default; libvirt
     // networks only do so when they declare a <forward> mode (nat/route) -
     // an isolated libvirt network has none, so treat that as already "down"
-    // rather than guessing "up".
-    const uplinkState: "up" | "down" = bridge.hasForwardInfo ? (bridge.forwardMode ? "up" : "down") : "up";
+    // rather than guessing "up". An explicit recorded "deny" always wins
+    // over either guess - it's a real user action, not a default.
+    const discoveredUplinkState: "up" | "down" = bridge.hasForwardInfo ? (bridge.forwardMode ? "up" : "down") : "up";
+    const uplinkState: "up" | "down" = controlState.bridgeForwards[bridge.name] ? "down" : discoveredUplinkState;
 
     const uplinkNodeId = `uplink:${bridge.name}`;
     nodes.push({
@@ -213,6 +264,36 @@ export function buildTopology(
     });
   }
 
+  // Bridge-to-bridge interconnects: these have no other discovery path at
+  // all (reading nftables rules needs the same root privilege as writing
+  // them), so the state file is their *only* source of truth, not just an
+  // override on top of a guessed default.
+  for (const key of Object.keys(controlState.bridgeLinks)) {
+    const separatorIndex = key.indexOf("|");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const first = key.slice(0, separatorIndex);
+    const second = key.slice(separatorIndex + 1);
+    if (!bridges.has(first) || !bridges.has(second)) {
+      // Stale entry (e.g. one of the bridges no longer exists) - skip rather
+      // than synthesize an edge between nodes we're not otherwise showing.
+      continue;
+    }
+
+    edges.push({
+      id: `link:${first}:${second}`,
+      from: `bridge:${first}`,
+      to: `bridge:${second}`,
+      kind: "interconnect",
+      state: "up",
+      controllable: true,
+      verb: "bridge-link",
+      actionTargetId: key
+    });
+  }
+
   return {
     nodes,
     edges,
@@ -221,55 +302,23 @@ export function buildTopology(
 }
 
 export async function getNetworkTopology(): Promise<NetworkTopology> {
-  const [containers, dockerNetworks, hostBridges, libvirtAvailable, controlAgentAvailable] = await Promise.all([
-    listAllContainers(),
-    listDockerNetworks(),
-    listHostBridges(),
-    isLibvirtAvailable(),
-    isPolkitAgentRunning()
-  ]);
+  const [containers, dockerNetworks, hostBridges, libvirtAvailable, controlAgentAvailable, controlState] =
+    await Promise.all([
+      listAllContainers(),
+      listDockerNetworks(),
+      listHostBridges(),
+      isLibvirtAvailable(),
+      isPolkitAgentRunning(),
+      readControlState()
+    ]);
 
   const [vmDomains, vmNetworks] = libvirtAvailable
     ? await Promise.all([listVmDomains(), listVmNetworks()])
     : [[], []];
 
   return {
-    ...buildTopology(containers, dockerNetworks, hostBridges, vmDomains, vmNetworks, libvirtAvailable),
+    ...buildTopology(containers, dockerNetworks, hostBridges, vmDomains, vmNetworks, libvirtAvailable, controlState),
     checkedAt: new Date().toISOString(),
     controlAgentAvailable
   };
-}
-
-/**
- * Patches a just-toggled edge's state (and, for a bridge-forward toggle, its
- * uplink node's status) onto a fresh topology read.
- *
- * This is necessary, not just an optimization: reading whether a veth or
- * nftables rule is administratively down requires the same root privilege as
- * setting it, which the unprivileged discovery path in `getNetworkTopology`
- * deliberately doesn't have. The one place that *does* know the true new
- * state is whoever just successfully ran the privileged action - so
- * `network-control-service` calls this immediately after, rather than
- * `getNetworkTopology` ever being able to observe it independently.
- */
-export function applyOptimisticEdgeState(
-  topology: NetworkTopology,
-  verb: NetworkActionVerb,
-  targetId: string,
-  state: "up" | "down"
-): NetworkTopology {
-  const edges = topology.edges.map((edge) =>
-    edge.verb === verb && edge.actionTargetId === targetId ? { ...edge, state } : edge
-  );
-
-  const affectedEdge = edges.find((edge) => edge.verb === verb && edge.actionTargetId === targetId);
-  if (!affectedEdge) {
-    return { ...topology, edges };
-  }
-
-  const nodes = topology.nodes.map((node) =>
-    node.id === affectedEdge.to && node.kind === "uplink" ? { ...node, status: state } : node
-  );
-
-  return { ...topology, nodes, edges };
 }

@@ -3,7 +3,7 @@ import { MarkerType, type Edge, type Node } from "@xyflow/react";
 import type { NetworkTopology, TopologyNode as TopologyNodeModel } from "../../shared/network-contracts";
 
 export type TopologyGraphEdgeData = {
-  kind: "attachment" | "uplink";
+  kind: "attachment" | "uplink" | "interconnect";
   state: "up" | "down";
   controllable: boolean;
 };
@@ -16,7 +16,15 @@ export const NODE_HEIGHT = 100;
 export const UPLINK_NODE_WIDTH = 150;
 export const UPLINK_NODE_HEIGHT = 64;
 
-function edgeColor(state: "up" | "down"): string {
+// Interconnect edges get their own color (reusing the same purple the
+// Compose project graph already uses for volume edges - an established
+// "this is a different relationship type" visual language) since, unlike
+// attachment/uplink, they only ever exist while connected - there's no
+// "down" state to color for.
+function edgeColor(kind: TopologyGraphEdgeData["kind"], state: "up" | "down"): string {
+  if (kind === "interconnect") {
+    return "var(--volume-node)";
+  }
   return state === "up" ? "var(--status-running)" : "var(--status-error)";
 }
 
@@ -32,7 +40,7 @@ export function buildTopologyGraph(topology: NetworkTopology): {
   }));
 
   const edges: Edge<TopologyGraphEdgeData>[] = topology.edges.map((edge) => {
-    const color = edgeColor(edge.state);
+    const color = edgeColor(edge.kind, edge.state);
     return {
       id: edge.id,
       source: edge.from,
@@ -54,6 +62,10 @@ export function buildTopologyGraph(topology: NetworkTopology): {
         fill: color,
         fontWeight: 600
       },
+      // Only a device's own attachment edge can be dragged onto a different
+      // bridge to reattach it - uplink (bridge<->internet) and interconnect
+      // (bridge<->bridge) edges use click-to-toggle only, not drag.
+      reconnectable: edge.kind === "attachment",
       data: {
         kind: edge.kind,
         state: edge.state,
