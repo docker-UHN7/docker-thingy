@@ -63,16 +63,22 @@ export function App() {
           }}
           onRefresh={() => void refreshRuntime()}
           onOpenSource={async () => {
-            await openSource();
-            setScreen("workspace");
+            const success = await openSource();
+            if (success && useAppStore.getState().activeProject()) {
+              setScreen("workspace");
+            }
           }}
           onOpenSourcePath={async (sourcePath) => {
-            await openSourcePath(sourcePath);
-            setScreen("workspace");
+            const success = await openSourcePath(sourcePath);
+            if (success && useAppStore.getState().activeProject()) {
+              setScreen("workspace");
+            }
           }}
           onOpenRecent={async (sourcePath) => {
-            await openRecentSource(sourcePath);
-            setScreen("workspace");
+            const success = await openRecentSource(sourcePath);
+            if (success && useAppStore.getState().activeProject()) {
+              setScreen("workspace");
+            }
           }}
           onToggleTheme={() => void cycleTheme()}
           recents={snapshot?.recents ?? []}

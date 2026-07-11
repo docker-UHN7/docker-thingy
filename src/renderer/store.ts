@@ -72,9 +72,9 @@ type AppState = {
   selectedProjectId: string | undefined;
   bootstrap(): Promise<void>;
   refreshRuntime(): Promise<void>;
-  openSource(): Promise<void>;
-  openSourcePath(sourcePath: string): Promise<void>;
-  openRecentSource(sourcePath: string): Promise<void>;
+  openSource(): Promise<boolean>;
+  openSourcePath(sourcePath: string): Promise<boolean>;
+  openRecentSource(sourcePath: string): Promise<boolean>;
   selectProject(projectId: string): void;
   updateSettings(settings: Partial<AppSettings>): Promise<void>;
   clearRecents(): Promise<void>;
@@ -176,7 +176,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       if (!result.ok) {
         set({ loading: false, error: result.error.message });
-        return;
+        return false;
       }
 
       set({
@@ -207,13 +207,17 @@ export const useAppStore = create<AppState>((set, get) => ({
                 logTailLines: 200
               }
             },
+        selectedProjectId: result.data.id,
         loading: false
       });
+
+      return true;
     } catch (error) {
       set({
         loading: false,
         error: error instanceof Error ? error.message : "Opening source failed."
       });
+      return false;
     }
   },
   async openSourcePath(sourcePath) {
@@ -224,7 +228,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       if (!result.ok) {
         set({ loading: false, error: result.error.message });
-        return;
+        return false;
       }
 
       set({
@@ -257,11 +261,14 @@ export const useAppStore = create<AppState>((set, get) => ({
             },
         loading: false
       });
+
+    return true;
     } catch (error) {
       set({
         loading: false,
         error: error instanceof Error ? error.message : "Opening source failed."
       });
+      return false;
     }
   },
   async openRecentSource(sourcePath) {
@@ -272,7 +279,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       if (!result.ok) {
         set({ recentLoadingPath: undefined, error: result.error.message });
-        return;
+        return false;
       }
 
       set({
@@ -303,11 +310,14 @@ export const useAppStore = create<AppState>((set, get) => ({
             },
         recentLoadingPath: undefined
       });
+    
+      return true;
     } catch (error) {
       set({
         recentLoadingPath: undefined,
         error: error instanceof Error ? error.message : "Opening recent source failed."
       });
+      return false;
     }
   },
   selectProject(projectId) {
