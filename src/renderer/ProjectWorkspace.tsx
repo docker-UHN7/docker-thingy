@@ -8,10 +8,12 @@ import {
   Layers,
   LoaderCircle,
   MoonStar,
+  PackagePlus,
   Plus,
   ScanSearch,
   Settings,
   SunMedium,
+  Trash2,
   TriangleAlert,
   X
 } from "lucide-react";
@@ -26,6 +28,7 @@ import type {
   ServiceNodeModel,
   StatsSnapshotResult
 } from "../shared/contracts";
+import { AddServicePanel } from "./AddServicePanel";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 import { distinguishingFileLabel, longestCommonPrefix } from "./compose-file-labels";
 import { Inspector } from "./Inspector";
@@ -109,6 +112,11 @@ export function ProjectWorkspace({
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
+<<<<<<< HEAD
+=======
+  const [addServiceOpen, setAddServiceOpen] = useState(false);
+  const [dismissedValidationOperationId, setDismissedValidationOperationId] = useState<string | undefined>();
+>>>>>>> 1c94fb6bcbf1022f3cc655568ba81614264c0143
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   // Toggling a compose-file checkbox round-trips through main (reload +
@@ -123,10 +131,13 @@ export function ProjectWorkspace({
   // need to touch, and an expanded file-order editor sitting open above the
   // graph on every visit was pure visual noise for the common case.
   const [composeSelectorOpen, setComposeSelectorOpen] = useState(false);
+  const [removingServiceName, setRemovingServiceName] = useState<string | undefined>();
+  const [removeServiceError, setRemoveServiceError] = useState<string | undefined>();
   const deferredQuery = useDeferredValue(query);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const clearRecents = useAppStore((state) => state.clearRecents);
   const updateProjectConfigFiles = useAppStore((state) => state.updateProjectConfigFiles);
+  const removeServiceFromProject = useAppStore((state) => state.removeServiceFromProject);
   const runProjectAction = useAppStore((state) => state.runProjectAction);
   const operations = useAppStore((state) => state.operations);
   const operation = project ? operations[project.id] : undefined;
@@ -150,12 +161,20 @@ export function ProjectWorkspace({
     }
   }, [project, selectedNodeId]);
 
+  // A successful removal clears selectedNodeId via the effect above (the
+  // service disappears from project.services) - clear any stale error along
+  // with it so switching to another service never shows a leftover message.
+  useEffect(() => {
+    setRemoveServiceError(undefined);
+  }, [selectedNodeId]);
+
   // Switching to a different project (including tabbing to a sibling) should
   // never carry over another project's in-flight compose-file selection.
   useEffect(() => {
     setOptimisticConfigFiles(undefined);
     setSavingConfigFiles(false);
     setEditorOpen(false);
+    setAddServiceOpen(false);
   }, [project?.id]);
 
   async function applyConfigFilesChange(newFiles: string[]) {
@@ -223,6 +242,7 @@ export function ProjectWorkspace({
         setSelectedNodeId(undefined);
         setSettingsOpen(false);
         setEditorOpen(false);
+        setAddServiceOpen(false);
       }
     }
 
@@ -353,6 +373,26 @@ export function ProjectWorkspace({
     void runProjectAction(project.id, actionId);
   }
 
+  async function handleRemoveService(serviceName: string) {
+    if (!project) {
+      return;
+    }
+
+    if (!window.confirm(`Remove "${serviceName}" from this project? This edits the compose file and can't be undone from here.`)) {
+      return;
+    }
+
+    setRemovingServiceName(serviceName);
+    setRemoveServiceError(undefined);
+
+    const result = await removeServiceFromProject(project.id, serviceName);
+
+    setRemovingServiceName(undefined);
+    if (!result.ok) {
+      setRemoveServiceError(result.error.message);
+    }
+  }
+
   const lifecycle = deriveProjectLifecycle(project);
   const runtimeStateLabel =
     lifecycle.state === "running"
@@ -376,6 +416,7 @@ export function ProjectWorkspace({
   );
   const canEditSource =
     project.access === "editable" && (project.runtimeKind === "compose" || project.runtimeKind === "dockerfile");
+  const canAddService = project.runtimeKind === "compose" && project.access === "editable";
 
   return (
     <main className="workspace-screen">
@@ -396,6 +437,7 @@ export function ProjectWorkspace({
             setDetailTab("overview");
             setSettingsOpen(false);
             setEditorOpen(false);
+            setAddServiceOpen(false);
           }}
           onClearSelection={() => setSelectedNodeId(undefined)}
         >
@@ -560,6 +602,36 @@ export function ProjectWorkspace({
               <div className="workspace-toolbar__divider" />
 
               <div className="workspace-toolbar__cluster">
+<<<<<<< HEAD
+=======
+                <button
+                  className="button button--secondary"
+                  onClick={() => setLayoutDirection((current) => (current === "RIGHT" ? "DOWN" : "RIGHT"))}
+                >
+                  <LayoutPanelTop size={16} />
+                  <span>{layoutDirection === "RIGHT" ? "Left to right" : "Top to bottom"}</span>
+                </button>
+              </div>
+
+              <div className="workspace-toolbar__divider" />
+
+              <div className="workspace-toolbar__cluster">
+                {canAddService ? (
+                  <button
+                    className="button button--secondary"
+                    aria-pressed={addServiceOpen}
+                    onClick={() => {
+                      setAddServiceOpen((value) => !value);
+                      setSettingsOpen(false);
+                      setEditorOpen(false);
+                      setSelectedNodeId(undefined);
+                    }}
+                  >
+                    <PackagePlus size={16} />
+                    <span>Add service</span>
+                  </button>
+                ) : null}
+>>>>>>> 1c94fb6bcbf1022f3cc655568ba81614264c0143
                 {canEditSource ? (
                   <button
                     className="icon-button"
@@ -568,6 +640,7 @@ export function ProjectWorkspace({
                     onClick={() => {
                       setEditorOpen((value) => !value);
                       setSettingsOpen(false);
+                      setAddServiceOpen(false);
                       setSelectedNodeId(undefined);
                     }}
                   >
@@ -583,6 +656,7 @@ export function ProjectWorkspace({
                   onClick={() => {
                     setSettingsOpen((value) => !value);
                     setEditorOpen(false);
+                    setAddServiceOpen(false);
                   }}
                 >
                   <Settings size={16} />
@@ -602,7 +676,9 @@ export function ProjectWorkspace({
           </Panel>
 
           <Panel position="center-right" style={{ margin: 16 }}>
-            {editorOpen && canEditSource ? (
+            {addServiceOpen && canAddService ? (
+              <AddServicePanel project={project} onClose={() => setAddServiceOpen(false)} />
+            ) : editorOpen && canEditSource ? (
               <SourceEditorPanel project={project} theme={theme} onClose={() => setEditorOpen(false)} />
             ) : settingsOpen && settings ? (
               <aside className="floating-panel detail-panel detail-panel--overlay">
@@ -628,10 +704,33 @@ export function ProjectWorkspace({
                     <p className="eyebrow">Detail Panel</p>
                     <h3 className="panel-title">{selectedService.name}</h3>
                   </div>
-                  <button className="icon-button" onClick={() => setSelectedNodeId(undefined)} aria-label="Close panel">
-                    <X size={16} />
-                  </button>
+                  <div className="detail-panel__header-actions">
+                    {canAddService ? (
+                      <button
+                        className="icon-button icon-button--danger"
+                        aria-label={`Remove ${selectedService.name} from this project`}
+                        onClick={() => void handleRemoveService(selectedService.name)}
+                        disabled={removingServiceName === selectedService.name}
+                      >
+                        {removingServiceName === selectedService.name ? (
+                          <LoaderCircle size={16} className="busy spin" />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+                      </button>
+                    ) : null}
+                    <button className="icon-button" onClick={() => setSelectedNodeId(undefined)} aria-label="Close panel">
+                      <X size={16} />
+                    </button>
+                  </div>
                 </div>
+
+                {removeServiceError ? (
+                  <div className="detail-list__row detail-list__row--error">
+                    <TriangleAlert size={14} />
+                    <span className="mono-value">{removeServiceError}</span>
+                  </div>
+                ) : null}
 
                 <div className="detail-tabs">
                   {(["overview", "env", "mounts", "logs"] as DetailTab[]).map((tab) => (
