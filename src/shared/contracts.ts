@@ -285,6 +285,7 @@ export type ProjectSummary = {
   sourcePath?: string | undefined;
   configFiles: string[];
   allConfigFiles?: string[];
+  dockerfilePaths?: string[];
   groupId?: string | undefined;
   groupLabel?: string | undefined;
   services: ServiceNodeModel[];
@@ -383,6 +384,9 @@ export type ProjectActionResult = Result<{
   snapshot: AppSnapshot;
 }>;
 
+export type ReadSourceFileResult = Result<{ sourceText: string; hash: string }>;
+export type SaveSourceFileResult = Result<{ hash: string; snapshot: AppSnapshot }>;
+
 export type PreloadApi = {
   getSnapshot(): Promise<AppSnapshot>;
   openSource(): Promise<OpenSourceResult>;
@@ -393,6 +397,13 @@ export type PreloadApi = {
   updateSettings(settings: Partial<AppSettings>): Promise<AppSnapshot>;
   clearRecents(): Promise<AppSnapshot>;
   updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<AppSnapshot>;
+  readSourceFile(projectId: string, filePath: string): Promise<ReadSourceFileResult>;
+  saveSourceFile(
+    projectId: string,
+    filePath: string,
+    sourceText: string,
+    expectedHash: string
+  ): Promise<SaveSourceFileResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;

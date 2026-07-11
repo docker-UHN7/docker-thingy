@@ -1,6 +1,12 @@
 import { BrowserWindow, ipcMain } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
-import type { AppSnapshot, OpenSourceResult, ProjectActionResult } from "../shared/contracts";
+import type {
+  AppSnapshot,
+  OpenSourceResult,
+  ProjectActionResult,
+  ReadSourceFileResult,
+  SaveSourceFileResult
+} from "../shared/contracts";
 import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
 import { NetworkActionRequestSchema } from "../shared/network-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
@@ -106,6 +112,47 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       }
 
       return projectService.updateProjectConfigFiles(projectId, configFiles);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.READ_SOURCE_FILE,
+    async (event, projectId: unknown, filePath: unknown): Promise<ReadSourceFileResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof filePath !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid read file request." } };
+      }
+
+      return projectService.readSourceFile(projectId, filePath);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SAVE_SOURCE_FILE,
+    async (
+      event,
+      projectId: unknown,
+      filePath: unknown,
+      sourceText: unknown,
+      expectedHash: unknown
+    ): Promise<SaveSourceFileResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (
+        typeof projectId !== "string" ||
+        typeof filePath !== "string" ||
+        typeof sourceText !== "string" ||
+        typeof expectedHash !== "string"
+      ) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid save file request." } };
+      }
+
+      return projectService.saveSourceFile(projectId, filePath, sourceText, expectedHash);
     }
   );
 

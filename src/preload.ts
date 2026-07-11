@@ -13,6 +13,9 @@ const api: PreloadApi & NetworkPreloadApi = {
   updateSettings: (settings) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTINGS, settings),
   clearRecents: () => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_RECENTS),
   updateProjectConfigFiles: (projectId, configFiles) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_PROJECT_CONFIG_FILES, projectId, configFiles),
+  readSourceFile: (projectId, filePath) => ipcRenderer.invoke(IPC_CHANNELS.READ_SOURCE_FILE, projectId, filePath),
+  saveSourceFile: (projectId, filePath, sourceText, expectedHash) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SAVE_SOURCE_FILE, projectId, filePath, sourceText, expectedHash),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {

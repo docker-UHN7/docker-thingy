@@ -5,6 +5,8 @@ import type {
   ExecutableProjectActionId,
   OperationEvent,
   ProjectSummary,
+  ReadSourceFileResult,
+  SaveSourceFileResult,
   ThemeMode
 } from "../shared/contracts";
 
@@ -81,6 +83,13 @@ type AppState = {
   updateSettings(settings: Partial<AppSettings>): Promise<void>;
   clearRecents(): Promise<void>;
   updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<void>;
+  readSourceFile(projectId: string, filePath: string): Promise<ReadSourceFileResult>;
+  saveSourceFile(
+    projectId: string,
+    filePath: string,
+    sourceText: string,
+    expectedHash: string
+  ): Promise<SaveSourceFileResult>;
   activeProject(): ProjectSummary | undefined;
   runProjectAction(projectId: string, actionId: ExecutableProjectActionId): Promise<void>;
   handleOperationEvent(event: OperationEvent): void;
@@ -383,6 +392,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         error: error instanceof Error ? error.message : "Failed to update active Compose files."
       });
     }
+  },
+  async readSourceFile(projectId, filePath) {
+    return window.dockerExplorer.readSourceFile(projectId, filePath);
+  },
+  async saveSourceFile(projectId, filePath, sourceText, expectedHash) {
+    const result = await window.dockerExplorer.saveSourceFile(projectId, filePath, sourceText, expectedHash);
+    if (result.ok) {
+      get().applySnapshot(result.data.snapshot);
+    }
+    return result;
   },
   activeProject() {
     const { snapshot, selectedProjectId } = get();
