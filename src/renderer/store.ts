@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type {
+  AddServiceInput,
+  AddServiceResult,
   AppSettings,
   AppSnapshot,
   ExecutableProjectActionId,
@@ -7,6 +9,7 @@ import type {
   ProjectSummary,
   ReadSourceFileResult,
   SaveSourceFileResult,
+  SearchDockerHubResult,
   ThemeMode
 } from "../shared/contracts";
 
@@ -90,6 +93,8 @@ type AppState = {
     sourceText: string,
     expectedHash: string
   ): Promise<SaveSourceFileResult>;
+  searchDockerHub(query: string): Promise<SearchDockerHubResult>;
+  addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
   activeProject(): ProjectSummary | undefined;
   runProjectAction(projectId: string, actionId: ExecutableProjectActionId): Promise<void>;
   handleOperationEvent(event: OperationEvent): void;
@@ -398,6 +403,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   async saveSourceFile(projectId, filePath, sourceText, expectedHash) {
     const result = await window.dockerExplorer.saveSourceFile(projectId, filePath, sourceText, expectedHash);
+    if (result.ok) {
+      get().applySnapshot(result.data.snapshot);
+    }
+    return result;
+  },
+  async searchDockerHub(query) {
+    return window.dockerExplorer.searchDockerHub(query);
+  },
+  async addServiceToProject(projectId, input) {
+    const result = await window.dockerExplorer.addServiceToProject(projectId, input);
     if (result.ok) {
       get().applySnapshot(result.data.snapshot);
     }

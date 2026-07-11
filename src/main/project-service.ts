@@ -6,6 +6,8 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { join, dirname, basename, extname } from "node:path";
 import { parseDocument } from "yaml";
 import type {
+  AddServiceInput,
+  AddServiceResult,
   AppSettings,
   AppSnapshot,
   ExecutableProjectActionId,
@@ -28,11 +30,11 @@ import {
   mergeSourceProjectWithRuntime,
   resolveConfigKey
 } from "./docker-service";
-import { hashSource, loadComposeProject } from "./compose-service";
-import { loadDockerfileProject } from "./dockerfile-service";
+import { addServiceToCompose, hashSource, loadComposeProject } from "./compose-service";
+import { loadDockerfileProject, validateImageTag } from "./dockerfile-service";
 import { executeProjectAction } from "./operation-runner";
 import { isTimeoutError } from "./process-runner";
-import { isValidContainerRef, normalizeLogTail, sanitizeSettingsPatch } from "./validation";
+import { isValidContainerRef, isValidServiceName, normalizeLogTail, sanitizeSettingsPatch } from "./validation";
 import { saveSourceAtomically } from "./atomic-save";
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
@@ -923,6 +925,95 @@ export class ProjectService {
       this.emitSnapshot();
 
       return { ok: true, data: { hash: saveResult.data.hash, snapshot: this.snapshot } };
+    });
+  }
+
+  /**
+   * Adds a new service (from the "Add service" catalog) to a Compose
+   * project's base file, optionally wiring depends_on + connection env vars
+   * into any number of already-existing services. Writes go through the
+   * same hash-checked atomic save as everything else that touches a compose
+   * file on disk, then reload the project so the graph reflects the new
+   * service immediately.
+   */
+  async addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult> {
+    return this.withLock(async () => {
+      const project = this.snapshot.projects.find((entry) => entry.id === projectId);
+      if (!project || project.runtimeKind !== "compose" || project.access !== "editable") {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: "Project not found or is not an editable Compose project." }
+        };
+      }
+
+      if (!isValidServiceName(input.serviceName)) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Invalid service name - use lowercase letters, numbers, and . _ - only."
+          }
+        };
+      }
+
+      if (project.services.some((service) => service.name === input.serviceName)) {
+        return {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: `A service named "${input.serviceName}" already exists in this project.` }
+        };
+      }
+
+      const imageCheck = validateImageTag(input.image);
+      if (!imageCheck.ok) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: imageCheck.detail } };
+      }
+
+      const knownServiceNames = new Set(project.services.map((service) => service.name));
+      for (const connection of input.connectTo ?? []) {
+        if (!knownServiceNames.has(connection.serviceName)) {
+          return {
+            ok: false,
+            error: { code: "VALIDATION_FAILED", message: `Service "${connection.serviceName}" was not found in this project.` }
+          };
+        }
+      }
+
+      const mainPath = project.sourcePath ?? project.configFiles[0];
+      if (!mainPath) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Project has no known source path." } };
+      }
+
+      const currentText = await readFile(mainPath, "utf8");
+      const { sourceText: nextText } = addServiceToCompose(currentText, input);
+
+      const saveResult = await saveSourceAtomically(mainPath, nextText, hashSource(currentText));
+      if (!saveResult.ok) {
+        return saveResult;
+      }
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+      if (project.allConfigFiles) {
+        reloaded.allConfigFiles = project.allConfigFiles;
+      }
+      if (project.groupId) {
+        reloaded.groupId = project.groupId;
+        reloaded.groupLabel = project.groupLabel;
+      }
+
+      const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+      const sourceProjects = this.snapshot.projects.filter(
+        (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+      );
+      const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+      this.snapshot = {
+        ...this.snapshot,
+        projects: mergedProjects
+      };
+      this.emitSnapshot();
+
+      return { ok: true, data: { snapshot: this.snapshot, serviceName: input.serviceName } };
     });
   }
 

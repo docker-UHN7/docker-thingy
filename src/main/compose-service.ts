@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { Document } from "yaml";
 import type {
+  AddServiceInput,
   DependencyDescriptor,
   GraphExternalNode,
   PortMapping,
@@ -651,4 +652,95 @@ export function updateComposeImage(
     sourceText: next,
     diffPreview: `- image: <previous>\n+ image: ${image}`
   };
+}
+
+// Adds `dependencyService` to `targetService`'s depends_on, preserving
+// whichever form (short list or long map-with-condition) is already there,
+// and creating a short-list form if the service has no depends_on yet.
+function addDependency(document: Document, targetService: string, dependencyService: string): void {
+  const path = ["services", targetService, "depends_on"];
+  const existing = document.getIn(path, true);
+
+  if (isSeq(existing)) {
+    const alreadyPresent = existing.items.some(
+      (item) => (isScalar(item) ? String(item.value) : String(item)) === dependencyService
+    );
+    if (!alreadyPresent) {
+      existing.add(dependencyService);
+    }
+    return;
+  }
+
+  if (isMap(existing)) {
+    if (!existing.has(dependencyService)) {
+      existing.set(dependencyService, { condition: "service_started" });
+    }
+    return;
+  }
+
+  document.setIn(path, [dependencyService]);
+}
+
+// Merges one KEY=value into a service's environment block, preserving
+// whichever form (`environment: [KEY=value, ...]` or `environment: {KEY: value}`)
+// is already there. Skips the write if the list form already declares that key.
+function mergeEnvVar(document: Document, servicePath: readonly (string | number)[], key: string, value: string): void {
+  const envPath = [...servicePath, "environment"];
+  const existing = document.getIn(envPath, true);
+
+  if (isSeq(existing)) {
+    const alreadyPresent = existing.items.some((item) => {
+      const text = isScalar(item) ? String(item.value) : String(item);
+      return text.startsWith(`${key}=`);
+    });
+    if (!alreadyPresent) {
+      existing.add(`${key}=${value}`);
+    }
+    return;
+  }
+
+  document.setIn([...envPath, key], value);
+}
+
+// Adds a new service (from the "Add service" catalog) to the compose file,
+// optionally wiring a persistent named volume and, for each service listed
+// in `connectTo`, a depends_on entry plus connection environment variables -
+// see resolveConnectionEnv in shared/service-presets.ts for how those
+// env values get built.
+export function addServiceToCompose(
+  sourceText: string,
+  input: AddServiceInput
+): { sourceText: string; diffPreview: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+
+  const serviceNode: Record<string, unknown> = { image: input.image, restart: "unless-stopped" };
+  if (input.environment && Object.keys(input.environment).length > 0) {
+    serviceNode.environment = input.environment;
+  }
+  if (input.ports && input.ports.length > 0) {
+    serviceNode.ports = input.ports;
+  }
+  if (input.volumeName && input.volumeMountPath) {
+    serviceNode.volumes = [`${input.volumeName}:${input.volumeMountPath}`];
+  }
+
+  document.setIn(["services", input.serviceName], serviceNode);
+
+  if (input.volumeName) {
+    document.setIn(["volumes", input.volumeName], null);
+  }
+
+  const diffLines = [`+ services.${input.serviceName}:`, `+   image: ${input.image}`];
+
+  for (const target of input.connectTo ?? []) {
+    addDependency(document, target.serviceName, input.serviceName);
+    diffLines.push(`+ services.${target.serviceName}.depends_on: +${input.serviceName}`);
+
+    for (const [key, value] of Object.entries(target.environment)) {
+      mergeEnvVar(document, ["services", target.serviceName], key, value);
+      diffLines.push(`+ services.${target.serviceName}.environment.${key}=${value}`);
+    }
+  }
+
+  return { sourceText: String(document), diffPreview: diffLines.join("\n") };
 }

@@ -1,16 +1,20 @@
 import { BrowserWindow, ipcMain } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import type {
+  AddServiceInput,
+  AddServiceResult,
   AppSnapshot,
   OpenSourceResult,
   ProjectActionResult,
   ReadSourceFileResult,
-  SaveSourceFileResult
+  SaveSourceFileResult,
+  SearchDockerHubResult
 } from "../shared/contracts";
 import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
 import { NetworkActionRequestSchema } from "../shared/network-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { ProjectService } from "./project-service";
+import { searchDockerHub } from "./docker-hub-service";
 import { getNetworkTopology } from "./topology-service";
 import { runNetworkAction } from "./network-control-service";
 
@@ -112,6 +116,34 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       }
 
       return projectService.updateProjectConfigFiles(projectId, configFiles);
+    }
+  );
+
+  ipcMain.handle(IPC_CHANNELS.SEARCH_DOCKER_HUB, async (event, query: unknown): Promise<SearchDockerHubResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    if (typeof query !== "string") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid search query." } };
+    }
+
+    const results = await searchDockerHub(query);
+    return { ok: true, data: { results } };
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.ADD_SERVICE_TO_PROJECT,
+    async (event, projectId: unknown, input: unknown): Promise<AddServiceResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof input !== "object" || input === null) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid add-service request." } };
+      }
+
+      return projectService.addServiceToProject(projectId, input as AddServiceInput);
     }
   );
 

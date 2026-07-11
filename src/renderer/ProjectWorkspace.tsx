@@ -9,6 +9,7 @@ import {
   LayoutPanelTop,
   LoaderCircle,
   MoonStar,
+  PackagePlus,
   Plus,
   ScanSearch,
   Settings,
@@ -27,6 +28,7 @@ import type {
   ServiceNodeModel,
   StatsSnapshotResult
 } from "../shared/contracts";
+import { AddServicePanel } from "./AddServicePanel";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 import { distinguishingFileLabel, longestCommonPrefix } from "./compose-file-labels";
 import { Inspector } from "./Inspector";
@@ -111,6 +113,7 @@ export function ProjectWorkspace({
   const [layoutDirection, setLayoutDirection] = useState<"RIGHT" | "DOWN">("RIGHT");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [addServiceOpen, setAddServiceOpen] = useState(false);
   const [dismissedValidationOperationId, setDismissedValidationOperationId] = useState<string | undefined>();
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
@@ -159,6 +162,7 @@ export function ProjectWorkspace({
     setOptimisticConfigFiles(undefined);
     setSavingConfigFiles(false);
     setEditorOpen(false);
+    setAddServiceOpen(false);
   }, [project?.id]);
 
   useEffect(() => {
@@ -232,6 +236,7 @@ export function ProjectWorkspace({
         setSelectedNodeId(undefined);
         setSettingsOpen(false);
         setEditorOpen(false);
+        setAddServiceOpen(false);
       }
     }
 
@@ -390,6 +395,7 @@ export function ProjectWorkspace({
   );
   const canEditSource =
     project.access === "editable" && (project.runtimeKind === "compose" || project.runtimeKind === "dockerfile");
+  const canAddService = project.runtimeKind === "compose" && project.access === "editable";
 
   return (
     <main className="workspace-screen">
@@ -411,6 +417,7 @@ export function ProjectWorkspace({
             setDetailTab("overview");
             setSettingsOpen(false);
             setEditorOpen(false);
+            setAddServiceOpen(false);
           }}
           onClearSelection={() => setSelectedNodeId(undefined)}
         >
@@ -587,6 +594,21 @@ export function ProjectWorkspace({
               <div className="workspace-toolbar__divider" />
 
               <div className="workspace-toolbar__cluster">
+                {canAddService ? (
+                  <button
+                    className="button button--secondary"
+                    aria-pressed={addServiceOpen}
+                    onClick={() => {
+                      setAddServiceOpen((value) => !value);
+                      setSettingsOpen(false);
+                      setEditorOpen(false);
+                      setSelectedNodeId(undefined);
+                    }}
+                  >
+                    <PackagePlus size={16} />
+                    <span>Add service</span>
+                  </button>
+                ) : null}
                 {canEditSource ? (
                   <button
                     className="icon-button"
@@ -595,6 +617,7 @@ export function ProjectWorkspace({
                     onClick={() => {
                       setEditorOpen((value) => !value);
                       setSettingsOpen(false);
+                      setAddServiceOpen(false);
                       setSelectedNodeId(undefined);
                     }}
                   >
@@ -610,6 +633,7 @@ export function ProjectWorkspace({
                   onClick={() => {
                     setSettingsOpen((value) => !value);
                     setEditorOpen(false);
+                    setAddServiceOpen(false);
                   }}
                 >
                   <Settings size={16} />
@@ -629,7 +653,9 @@ export function ProjectWorkspace({
           </Panel>
 
           <Panel position="center-right" style={{ margin: 16 }}>
-            {editorOpen && canEditSource ? (
+            {addServiceOpen && canAddService ? (
+              <AddServicePanel project={project} onClose={() => setAddServiceOpen(false)} />
+            ) : editorOpen && canEditSource ? (
               <SourceEditorPanel project={project} theme={theme} onClose={() => setEditorOpen(false)} />
             ) : settingsOpen && settings ? (
               <aside className="floating-panel detail-panel detail-panel--overlay">

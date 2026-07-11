@@ -16,6 +16,8 @@ const api: PreloadApi & NetworkPreloadApi = {
   readSourceFile: (projectId, filePath) => ipcRenderer.invoke(IPC_CHANNELS.READ_SOURCE_FILE, projectId, filePath),
   saveSourceFile: (projectId, filePath, sourceText, expectedHash) =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_SOURCE_FILE, projectId, filePath, sourceText, expectedHash),
+  searchDockerHub: (query) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_DOCKER_HUB, query),
+  addServiceToProject: (projectId, input) => ipcRenderer.invoke(IPC_CHANNELS.ADD_SERVICE_TO_PROJECT, projectId, input),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {
