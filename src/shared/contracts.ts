@@ -13,8 +13,10 @@ export const ContainerInspectSchema = z.looseObject({
     .looseObject({
       Image: z.string().optional(),
       Env: z.array(z.string()).optional(),
-      Cmd: z.array(z.string()).optional(),
-      Entrypoint: z.array(z.string()).optional(),
+      // Docker returns null (not just an omitted key) for these when unset -
+      // e.g. an image with no Dockerfile CMD, or no explicit ENTRYPOINT.
+      Cmd: z.array(z.string()).nullish(),
+      Entrypoint: z.array(z.string()).nullish(),
       WorkingDir: z.string().optional(),
       Labels: z.record(z.string(), z.string()).optional(),
       ExposedPorts: z.record(z.string(), z.unknown()).optional()
@@ -84,7 +86,9 @@ export const ContainerInspectSchema = z.looseObject({
             IPAddress: z.string().optional(),
             Gateway: z.string().optional(),
             MacAddress: z.string().optional(),
-            Aliases: z.array(z.string()).optional()
+            // Docker returns null here (not [] or an omitted key) when no
+            // aliases are set, which is the common case.
+            Aliases: z.array(z.string()).nullish()
           })
         )
         .optional()

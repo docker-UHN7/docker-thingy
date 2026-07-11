@@ -1728,6 +1728,91 @@ button {
   border-style: dashed;
 }
 
+.topology-node {
+  /* Fixed size + overflow:hidden mirrors .manifest-node above; must stay in
+     sync with NODE_WIDTH/NODE_HEIGHT in topology-graph-builder.ts. */
+  width: 200px;
+  height: 100px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+  cursor: default;
+}
+
+.topology-node--container {
+  border-left-color: var(--status-info);
+}
+
+.topology-node--vm {
+  border-left-color: var(--volume-node);
+}
+
+.topology-node--bridge {
+  border-left-color: var(--accent-copper);
+}
+
+.topology-node__title {
+  justify-content: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-h2);
+  line-height: 20px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.topology-node__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.topology-node__kind {
+  color: var(--text-tertiary);
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.topology-node__detail {
+  margin: 0;
+  align-self: end;
+  color: var(--text-secondary);
+  font-size: var(--text-mono-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-uplink-node {
+  width: 150px;
+  height: 64px;
+  overflow: hidden;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-surface);
+  text-align: center;
+}
+
+.topology-uplink-node__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
