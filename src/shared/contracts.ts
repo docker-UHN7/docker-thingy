@@ -387,6 +387,34 @@ export type ProjectActionResult = Result<{
 export type ReadSourceFileResult = Result<{ sourceText: string; hash: string }>;
 export type SaveSourceFileResult = Result<{ hash: string; snapshot: AppSnapshot }>;
 
+export type AddServiceConnection = {
+  serviceName: string;
+  environment: Record<string, string>;
+};
+
+export type AddServiceInput = {
+  serviceName: string;
+  image: string;
+  environment?: Record<string, string>;
+  ports?: string[];
+  volumeName?: string;
+  volumeMountPath?: string;
+  connectTo?: AddServiceConnection[];
+};
+
+export type AddServiceResult = Result<{ snapshot: AppSnapshot; serviceName: string }>;
+
+export type DockerHubSearchResult = {
+  name: string;
+  description: string;
+  isOfficial: boolean;
+  starCount: number;
+};
+
+export type SearchDockerHubResult = Result<{ results: DockerHubSearchResult[] }>;
+
+export type RemoveServiceResult = Result<{ snapshot: AppSnapshot; serviceName: string }>;
+
 export type PreloadApi = {
   getSnapshot(): Promise<AppSnapshot>;
   openSource(): Promise<OpenSourceResult>;
@@ -404,6 +432,9 @@ export type PreloadApi = {
     sourceText: string,
     expectedHash: string
   ): Promise<SaveSourceFileResult>;
+  searchDockerHub(query: string): Promise<SearchDockerHubResult>;
+  addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
+  removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;

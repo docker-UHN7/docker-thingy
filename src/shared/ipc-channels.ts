@@ -12,6 +12,9 @@ export const IPC_CHANNELS = {
   UPDATE_PROJECT_CONFIG_FILES: "app:update-project-config-files",
   READ_SOURCE_FILE: "app:read-source-file",
   SAVE_SOURCE_FILE: "app:save-source-file",
+  SEARCH_DOCKER_HUB: "app:search-docker-hub",
+  ADD_SERVICE_TO_PROJECT: "app:add-service-to-project",
+  REMOVE_SERVICE_FROM_PROJECT: "app:remove-service-from-project",
   SNAPSHOT_EVENT: "snapshot:event",
   NETWORK_GET_TOPOLOGY: "network:get-topology",
   NETWORK_RUN_ACTION: "network:run-action"

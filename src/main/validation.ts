@@ -42,6 +42,15 @@ export function isValidMacAddress(value: unknown): value is string {
   return typeof value === "string" && MAC_ADDRESS_PATTERN.test(value);
 }
 
+// Compose service names are restricted (by the Compose spec itself) to
+// lowercase alphanumerics plus `._-`, and this name ends up both as a YAML
+// mapping key and as a DNS-resolvable hostname on the project's network.
+const SERVICE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
+
+export function isValidServiceName(value: unknown): value is string {
+  return typeof value === "string" && SERVICE_NAME_PATTERN.test(value);
+}
+
 const MIN_LOG_TAIL = 1;
 const MAX_LOG_TAIL = 10_000;
 const DEFAULT_LOG_TAIL = 200;
