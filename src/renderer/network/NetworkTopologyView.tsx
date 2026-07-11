@@ -186,35 +186,33 @@ export function NetworkTopologyView({ theme, onBack, onToggleTheme }: NetworkTop
         </div>
       ) : null}
 
-      <div className="workspace-frame">
-        <section className="graph-stage">
-          {loading && !topology ? (
-            <div className="empty-dropzone">
-              <LoaderCircle size={28} className="busy spin" />
-              <p>Discovering containers, VMs, and bridges...</p>
-            </div>
-          ) : (
-            <div className="graph-shell">
-              <ReactFlow
-                nodes={rawNodes}
-                edges={rawEdges}
-                nodeTypes={nodeTypes}
-                fitView={false}
-                proOptions={{ hideAttribution: true }}
-                nodesDraggable={false}
-                onEdgeClick={handleEdgeClick}
-                onInit={(instance) => {
-                  flowRef.current = instance;
-                  scheduleFitView();
-                }}
-              >
-                <Controls showInteractive={false} />
-                <Background variant={BackgroundVariant.Dots} color="var(--border-subtle)" gap={20} size={1} />
-              </ReactFlow>
-            </div>
-          )}
-        </section>
-      </div>
+      <section className="workspace-canvas">
+        {loading && !topology ? (
+          <div className="empty-dropzone">
+            <LoaderCircle size={28} className="busy spin" />
+            <p>Discovering containers, VMs, and bridges...</p>
+          </div>
+        ) : (
+          <div className="graph-shell">
+            <ReactFlow
+              nodes={rawNodes}
+              edges={rawEdges}
+              nodeTypes={nodeTypes}
+              fitView={false}
+              proOptions={{ hideAttribution: true }}
+              nodesDraggable={false}
+              onEdgeClick={handleEdgeClick}
+              onInit={(instance) => {
+                flowRef.current = instance;
+                scheduleFitView();
+              }}
+            >
+              <Controls showInteractive={false} />
+              <Background variant={BackgroundVariant.Dots} color="var(--border-subtle)" gap={20} size={1} />
+            </ReactFlow>
+          </div>
+        )}
+      </section>
     </main>
   );
 }
