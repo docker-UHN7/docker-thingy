@@ -1,0 +1,63 @@
+{
+  "name": "docker-thingy",
+  "productName": "Docker Project Explorer",
+  "version": "0.1.0",
+  "description": "A sleek desktop explorer for Docker Compose projects, Dockerfiles, and runtime state.",
+  "main": ".webpack/main",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "keywords": [
+    "electron",
+    "docker",
+    "react",
+    "typescript"
+  ],
+  "author": "OpenAI Codex",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0",
+    "npm": ">=11"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@xyflow/react": "latest",
+    "electron-squirrel-startup": "latest",
+    "elkjs": "latest",
+    "lucide-react": "^1.24.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "write-file-atomic": "^7.0.0",
+    "yaml": "latest",
+    "zod": "latest",
+    "zustand": "latest"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "latest",
+    "@electron-forge/maker-deb": "latest",
+    "@electron-forge/maker-rpm": "latest",
+    "@electron-forge/maker-squirrel": "latest",
+    "@electron-forge/maker-zip": "latest",
+    "@electron-forge/plugin-webpack": "latest",
+    "@electron-forge/shared-types": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "css-loader": "latest",
+    "electron": "latest",
+    "jsdom": "latest",
+    "style-loader": "latest",
+    "ts-loader": "latest",
+    "typescript": "^5.9.2",
+    "vitest": "latest"
+  }
+}

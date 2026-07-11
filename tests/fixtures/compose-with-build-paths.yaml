@@ -1,0 +1,10 @@
+services:
+  backend:
+    build:
+      context: backend
+      dockerfile: ../backend.Dockerfile
+  worker:
+    build:
+      context: /opt/projects/shared-context
+      dockerfile: Dockerfile
+

@@ -1,0 +1,45 @@
+node_modules/
+
+# Build and packaging output
+dist/
+out/
+.webpack/
+
+# Test and coverage output
+coverage/
+.nyc_output/
+vitest-report/
+
+# Tooling caches
+.npm-cache/
+.eslintcache
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment and local-only config
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# Temporary / backup files
+*.tmp
+*.temp
+*.bak
+*.swp
+
+# Local terminal/session dumps — remove this block if these are meant to be committed
+terminals/

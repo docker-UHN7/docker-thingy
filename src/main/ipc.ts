@@ -1,0 +1,89 @@
+import { BrowserWindow, ipcMain } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
+import type { AppSnapshot, OpenSourceResult, RefreshRuntimeResult } from "../shared/contracts";
+import { IPC_CHANNELS } from "../shared/ipc-channels";
+import { ProjectService } from "./project-service";
+
+function isTrustedSender(mainWindow: BrowserWindow, event: IpcMainInvokeEvent): boolean {
+  if (event.sender.id !== mainWindow.webContents.id) {
+    return false;
+  }
+
+  const senderFrame = event.senderFrame;
+  const mainFrame = mainWindow.webContents.mainFrame;
+
+  if (!senderFrame) {
+    return true;
+  }
+
+  return senderFrame === mainFrame || senderFrame.routingId === mainFrame.routingId;
+}
+
+export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectService): void {
+  ipcMain.handle(IPC_CHANNELS.GET_SNAPSHOT, async (event): Promise<AppSnapshot> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.getSnapshot();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.REFRESH_RUNTIME, async (event): Promise<RefreshRuntimeResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    const snapshot = await projectService.refreshRuntime();
+    return { ok: true, data: snapshot };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.OPEN_SOURCE, async (event): Promise<OpenSourceResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.openSource();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.OPEN_SOURCE_PATH, async (event, sourcePath: string): Promise<OpenSourceResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.openSourcePath(sourcePath);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.OPEN_RECENT_SOURCE, async (event, sourcePath: string): Promise<OpenSourceResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.openRecentSource(sourcePath);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_SERVICE_LOGS, async (event, containerId: string, tail: number) => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.getServiceLogs(containerId, tail);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.UPDATE_SETTINGS, async (event, settings) => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.updateSettings(settings);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLEAR_RECENTS, async (event) => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.clearRecents();
+  });
+}
+
+

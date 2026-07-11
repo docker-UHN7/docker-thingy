@@ -1,0 +1,33 @@
+[
+  {
+    "Id": "1b2c3d4e5f6g7h8i9j0k",
+    "Name": "/demo-web-1",
+    "Config": {
+      "Image": "nginx:latest",
+      "Labels": {
+        "com.docker.compose.project": "demo",
+        "com.docker.compose.service": "web"
+      }
+    },
+    "State": {
+      "Status": "running",
+      "Running": true
+    }
+  },
+  {
+    "Id": "9z8y7x6w5v4u3t2s1r0q",
+    "Name": "/demo-api-1",
+    "Config": {
+      "Image": "node:20-alpine",
+      "Labels": {
+        "com.docker.compose.project": "demo",
+        "com.docker.compose.service": "api"
+      }
+    },
+    "State": {
+      "Status": "exited",
+      "Running": false
+    }
+  }
+]
+

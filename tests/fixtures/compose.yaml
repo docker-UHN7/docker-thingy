@@ -1,0 +1,11 @@
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+  api:
+    image: node:20-alpine
+    restart: unless-stopped
+

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["DOM", "ES2022"],
+    "outDir": "dist",
+    "strict": true,
+    "jsx": "react-jsx",
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node", "react", "react-dom", "vitest/globals", "@testing-library/jest-dom"]
+  },
+  "include": ["src", "tests", "forge.config.ts", "webpack.*.ts"],
+  "exclude": ["node_modules", "dist", ".webpack"]
+}
