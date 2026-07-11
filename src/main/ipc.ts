@@ -7,6 +7,7 @@ import type {
   GetServiceFieldsResult,
   OpenSourceResult,
   ProjectActionResult,
+  PullImageResult,
   ReadSourceFileResult,
   RemoveServiceResult,
   SaveSourceFileResult,
@@ -22,6 +23,7 @@ import { RemoteAccessEnableRequestSchema, RemoteAccessSetHostRequestSchema } fro
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { ProjectService } from "./project-service";
 import { searchDockerHub } from "./docker-hub-service";
+import { pullImage } from "./docker-pull-service";
 import { getNetworkTopology } from "./topology-service";
 import { runNetworkAction } from "./network-control-service";
 import {
@@ -164,6 +166,30 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
 
     const results = await searchDockerHub(query);
     return { ok: true, data: { results } };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.PULL_IMAGE, async (event, image: unknown): Promise<PullImageResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    if (typeof image !== "string" || image.trim() === "") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid image name." } };
+    }
+
+    try {
+      await pullImage(image, (progressEvent) => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.PULL_PROGRESS_EVENT, progressEvent);
+        }
+      });
+      return { ok: true, data: { pulled: true } };
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: "PROCESS_FAILED", message: error instanceof Error ? error.message : "Image pull failed." }
+      };
+    }
   });
 
   ipcMain.handle(

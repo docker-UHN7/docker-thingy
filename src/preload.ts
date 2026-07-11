@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSnapshot, OperationEvent, PreloadApi } from "./shared/contracts";
+import type { AppSnapshot, OperationEvent, PreloadApi, PullProgressEvent } from "./shared/contracts";
 import type { NetworkPreloadApi } from "./shared/network-contracts";
 import type { RemoteAccessPreloadApi } from "./shared/remote-access-contracts";
 import { IPC_CHANNELS } from "./shared/ipc-channels";
@@ -34,6 +34,7 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
     ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT_DEPENDENCY, projectId, fromService, toService),
   disconnectVolumeMount: (projectId, serviceName, volumeName) =>
     ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT_VOLUME_MOUNT, projectId, serviceName, volumeName),
+  pullImage: (image) => ipcRenderer.invoke(IPC_CHANNELS.PULL_IMAGE, image),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {
@@ -64,6 +65,21 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
     };
     ipcRenderer.on(IPC_CHANNELS.SNAPSHOT_EVENT, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.SNAPSHOT_EVENT, handler);
+  },
+  subscribePullProgress: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: PullProgressEvent) => {
+      try {
+        listener(payload);
+      } catch (error) {
+        console.error("[preload] pull progress listener failed", {
+          payload,
+          error
+        });
+        throw error;
+      }
+    };
+    ipcRenderer.on(IPC_CHANNELS.PULL_PROGRESS_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.PULL_PROGRESS_EVENT, handler);
   },
   getNetworkTopology: () => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_GET_TOPOLOGY),
   runNetworkAction: (request) => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_RUN_ACTION, request),

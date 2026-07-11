@@ -438,6 +438,20 @@ export type UpdateServiceFieldsResult = Result<{ snapshot: AppSnapshot }>;
 // snapshot - used by the graph view's click-to-disconnect actions.
 export type SnapshotMutationResult = Result<{ snapshot: AppSnapshot }>;
 
+// Streamed while an image pull (dockerode) is in flight - `image` lets
+// listeners with several pulls potentially in flight filter to the one they
+// care about. `current`/`total` are byte counts for the layer named by `id`,
+// straight from the Docker Engine API's own progress payload.
+export type PullProgressEvent = {
+  image: string;
+  status: string;
+  id?: string | undefined;
+  current?: number | undefined;
+  total?: number | undefined;
+};
+
+export type PullImageResult = Result<{ pulled: true }>;
+
 export type PreloadApi = {
   // Routed through here rather than the web Clipboard API directly - the
   // Electron BrowserWindow denies every permission request/check (see
@@ -474,7 +488,9 @@ export type PreloadApi = {
   ): Promise<UpdateServiceFieldsResult>;
   disconnectDependency(projectId: string, fromService: string, toService: string): Promise<SnapshotMutationResult>;
   disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult>;
+  pullImage(image: string): Promise<PullImageResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;
+  subscribePullProgress(listener: (event: PullProgressEvent) => void): () => void;
 };

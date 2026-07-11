@@ -21,6 +21,8 @@ export const IPC_CHANNELS = {
   UPDATE_SERVICE_FIELDS: "app:update-service-fields",
   DISCONNECT_DEPENDENCY: "app:disconnect-dependency",
   DISCONNECT_VOLUME_MOUNT: "app:disconnect-volume-mount",
+  PULL_IMAGE: "app:pull-image",
+  PULL_PROGRESS_EVENT: "pull:progress-event",
   SNAPSHOT_EVENT: "snapshot:event",
   NETWORK_GET_TOPOLOGY: "network:get-topology",
   NETWORK_RUN_ACTION: "network:run-action",
