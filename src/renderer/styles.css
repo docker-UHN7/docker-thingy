@@ -276,6 +276,201 @@ button {
   line-height: 16px;
 }
 
+.project-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) 0;
+}
+
+/* Nested inside the narrow top-left floating project card instead of a
+   full-width header, so it drops the outer padding (the card's own grid
+   gap already spaces it) and shrinks the tab hit targets to fit. */
+.project-tabs--panel {
+  padding: 0;
+  min-width: 0;
+}
+
+.project-tabs--panel .project-tab {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
+  min-width: 0;
+}
+
+.project-tabs--panel .project-tab span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.project-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: background 120ms cubic-bezier(0.2, 0, 0, 1), border-color 120ms cubic-bezier(0.2, 0, 0, 1), color 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.project-tab:hover {
+  background: var(--bg-elevated-hover);
+  border-color: var(--border-strong);
+}
+
+.project-tab--active {
+  color: var(--text-primary);
+  border-color: var(--accent-copper-muted);
+  background: color-mix(in srgb, var(--accent-copper) 12%, var(--bg-elevated));
+}
+
+.compose-selector {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  max-width: 100%;
+  /* Grid items default to min-width:auto, which refuses to shrink below the
+     content's natural size (a long filename, an unwrapped chip) even though
+     the parent workspace-project-card panel is capped at ~300px - without
+     this the box just overflows past the panel instead of truncating/wrapping. */
+  min-width: 0;
+}
+
+.compose-selector--collapsed {
+  padding: var(--space-1) var(--space-3);
+}
+
+.compose-selector__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) 0;
+  border: none;
+  background: none;
+  color: var(--accent-copper);
+  text-align: left;
+  cursor: pointer;
+}
+
+.compose-selector__header:hover .compose-selector__title {
+  color: var(--accent-copper);
+}
+
+.compose-selector__title {
+  color: var(--text-primary);
+  font-size: var(--text-body-medium);
+  font-weight: 600;
+}
+
+.compose-selector__spinner {
+  margin-left: auto;
+  color: var(--accent-copper);
+}
+
+.compose-file-order {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.compose-file-order__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.compose-file-order__index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent-copper) 18%, transparent);
+  color: var(--accent-copper);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  font-weight: 600;
+}
+
+.compose-file-order__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.compose-file-order__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.icon-button--tiny {
+  width: 22px;
+  height: 22px;
+}
+
+.compose-file-order__available {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+  border-top: 1px dashed var(--border-subtle);
+  min-width: 0;
+}
+
+.chip-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms cubic-bezier(0.2, 0, 0, 1), border-color 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.chip-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.chip-button:hover {
+  background: var(--bg-elevated-hover);
+  border-color: var(--accent-copper-muted);
+  color: var(--text-primary);
+}
+
 .body-copy {
   font-size: var(--text-body);
   line-height: 20px;
@@ -550,6 +745,44 @@ button {
   justify-content: space-between;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+
+.project-card--group {
+  cursor: default;
+}
+
+.project-group__members {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.project-group__member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms cubic-bezier(0.2, 0, 0, 1), border-color 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.project-group__member:hover,
+.project-group__member--active {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated-hover);
+}
+
+.project-group__member-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
 }
 
 .mono-path,

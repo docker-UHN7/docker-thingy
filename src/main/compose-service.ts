@@ -338,9 +338,12 @@ function buildRelationshipEdges(services: ServiceNodeModel[]): RelationshipEdge[
   return output;
 }
 
-function deriveComposeProjectTitle(document: Document, sourcePath: string): string {
-  const declaredName = document.get("name");
-  if (typeof declaredName === "string" && declaredName.trim() !== "") {
+// declaredName comes from whichever active file last declared a `name:`
+// directive - later files win, same as every other merge rule here, so a
+// `name:` in an override file takes effect just like it would in real
+// `docker compose -f a -f b`.
+function deriveComposeProjectTitle(declaredName: string | undefined, sourcePath: string): string {
+  if (declaredName && declaredName.trim() !== "") {
     return declaredName.trim();
   }
 
@@ -418,33 +421,146 @@ function toServiceModels(document: Document): ServiceNodeModel[] {
   });
 }
 
-export async function loadComposeProject(sourcePath: string, contextName: string): Promise<ProjectSummary> {
-  const sourceText = await readFile(sourcePath, "utf8");
-  const document = parseDocument(sourceText, {
-    keepSourceTokens: true
-  });
+function dedupePortMappings(portMappings: PortMapping[]): PortMapping[] {
+  const seen = new Set<string>();
+  const output: PortMapping[] = [];
 
-  const services = toServiceModels(document);
+  for (const port of portMappings) {
+    const key =
+      port.state === "published" && port.hostPort
+        ? `${port.hostPort}:${port.containerPort}/${port.protocol}`
+        : `${port.state}:${port.containerPort}/${port.protocol}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    output.push(port);
+  }
+
+  return output;
+}
+
+function mergeDependencyDetails(base: DependencyDescriptor[], override: DependencyDescriptor[]): DependencyDescriptor[] {
+  const result = [...base];
+  for (const overDep of override) {
+    const existingIndex = result.findIndex((d) => d.serviceName === overDep.serviceName);
+    if (existingIndex === -1) {
+      // Ensure all required fields are present
+      result.push({
+        serviceName: overDep.serviceName,
+        condition: overDep.condition,
+        external: overDep.external
+      });
+    } else {
+      // Update existing
+      result[existingIndex] = {
+        ...result[existingIndex]!,
+        condition: overDep.condition ?? result[existingIndex]!.condition
+      };
+    }
+  }
+  return result;
+}
+
+function mergeComposeServices(base: ServiceNodeModel[], override: ServiceNodeModel[]): ServiceNodeModel[] {
+  const result = [...base];
+  for (const overService of override) {
+    const existingIndex = result.findIndex((s) => s.name === overService.name);
+    
+    if (existingIndex === -1) {
+      result.push(overService);
+    } else {
+      const baseService = result[existingIndex]!; // Use ! to tell TS you checked the index exists
+      const mergedPorts = dedupePortMappings([...baseService.portMappings, ...overService.portMappings]);
+      
+      // We must explicitly include the ID from the base service
+      result[existingIndex] = {
+        ...baseService, // Keep the original ID
+        image: overService.image ?? baseService.image,
+        ports: mergedPorts.map((entry) => entry.label),
+        portMappings: mergedPorts,
+        dependencies: [...new Set([...baseService.dependencies, ...overService.dependencies])],
+        dependencyDetails: mergeDependencyDetails(baseService.dependencyDetails, overService.dependencyDetails),
+        declaredNetworks: [...new Set([...baseService.declaredNetworks, ...overService.declaredNetworks])],
+        categories: {
+          containers: [...baseService.categories.containers, ...overService.categories.containers],
+          networks: [...new Set([...baseService.categories.networks, ...overService.categories.networks])],
+          volumes: [...new Set([...baseService.categories.volumes, ...overService.categories.volumes])]
+        },
+        sourceHints: {
+          buildContext: overService.sourceHints?.buildContext ?? baseService.sourceHints?.buildContext,
+          dockerfilePath: overService.sourceHints?.dockerfilePath ?? baseService.sourceHints?.dockerfilePath,
+          expose: [...new Set([...(baseService.sourceHints?.expose ?? []), ...(overService.sourceHints?.expose ?? [])])]
+        }
+      };
+    }
+  }
+  return result;
+}
+
+export async function loadComposeProject(
+  sourcePath: string,
+  contextName: string,
+  configFiles?: string[]
+): Promise<ProjectSummary> {
+  const activeFiles = configFiles && configFiles.length > 0 ? configFiles : [sourcePath];
+  let mergedServices: ServiceNodeModel[] = [];
   const diagnostics: ProjectDiagnostics[] = [];
+  let declaredName: string | undefined;
 
-  for (const service of services) {
-    if (service.sourceHints?.buildContext) {
-      diagnostics.push(...describeComposePath(service.sourceHints.buildContext));
+  for (const filePath of activeFiles) {
+    try {
+      const sourceText = await readFile(filePath, "utf8");
+      const document = parseDocument(sourceText, {
+        keepSourceTokens: true
+      });
+
+      const services = toServiceModels(document);
+      mergedServices = mergeComposeServices(mergedServices, services);
+
+      const fileDeclaredName = document.get("name");
+      if (typeof fileDeclaredName === "string" && fileDeclaredName.trim() !== "") {
+        declaredName = fileDeclaredName.trim();
+      }
+
+      for (const service of services) {
+        if (service.sourceHints?.buildContext) {
+          diagnostics.push(...describeComposePath(service.sourceHints.buildContext));
+        }
+      }
+    } catch (e) {
+      diagnostics.push({
+        level: "error",
+        title: `Failed to load ${filePath.split(/[/\\]/).at(-1)}`,
+        message: e instanceof Error ? e.message : "Error reading or parsing file."
+      });
     }
   }
 
+  // Deduplicate diagnostics
+  const uniqueDiagnostics = diagnostics.filter(
+    (diag, index, self) =>
+      index === self.findIndex((d) => d.title === diag.title && d.message === diag.message)
+  );
+
+  const projectTitle = deriveComposeProjectTitle(declaredName, sourcePath);
+
   return {
     id: `source-compose:${contextName}:${sourcePath}`,
-    title: deriveComposeProjectTitle(document, sourcePath),
-    subtitle: "Explicitly opened Compose source",
+    title: projectTitle,
+    subtitle: activeFiles.length > 1
+      ? `Merged Compose source (${activeFiles.length} files)`
+      : "Explicitly opened Compose source",
     runtimeKind: "compose",
     access: "editable",
     contextName,
-    composeProjectName: deriveComposeProjectTitle(document, sourcePath),
+    composeProjectName: projectTitle,
     sourcePath,
-    configFiles: [sourcePath],
-    services,
-    diagnostics,
+    configFiles: activeFiles,
+    services: mergedServices,
+    diagnostics: uniqueDiagnostics,
     actions: [
       { id: "validate", label: "Validate", emphasis: "primary" },
       { id: "build-image", label: "Build" },
@@ -455,8 +571,8 @@ export async function loadComposeProject(sourcePath: string, contextName: string
     buildStatus: "not-built",
     lastUpdatedLabel: "Opened from source",
     lastCheckedAt: new Date().toISOString(),
-    externalNodes: inferExternalNodes(services),
-    relationshipEdges: buildRelationshipEdges(services),
+    externalNodes: inferExternalNodes(mergedServices),
+    relationshipEdges: buildRelationshipEdges(mergedServices),
     sourceLinked: true
   };
 }

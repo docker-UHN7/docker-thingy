@@ -91,6 +91,21 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
   });
 
   ipcMain.handle(
+    IPC_CHANNELS.UPDATE_PROJECT_CONFIG_FILES,
+    async (event, projectId: unknown, configFiles: unknown): Promise<AppSnapshot> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || !Array.isArray(configFiles) || !configFiles.every((f) => typeof f === "string")) {
+        throw new Error("Invalid project config files request.");
+      }
+
+      return projectService.updateProjectConfigFiles(projectId, configFiles);
+    }
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.RUN_PROJECT_ACTION,
     async (event, projectId: unknown, actionId: unknown): Promise<ProjectActionResult> => {
       if (!isTrustedSender(mainWindow, event)) {

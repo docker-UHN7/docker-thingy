@@ -68,6 +68,7 @@ export function App() {
       {screen === "workspace" ? (
         <ProjectWorkspace
           project={activeProject}
+          projects={snapshot?.projects ?? []}
           dockerStatus={snapshot?.dockerStatus}
           settings={snapshot?.settings}
           theme={theme}
@@ -75,6 +76,7 @@ export function App() {
           error={error}
           onBack={() => setScreen("launcher")}
           onToggleTheme={() => toggleTheme()}
+          onSelectProject={selectProject}
         />
       ) : null}
     </div>
