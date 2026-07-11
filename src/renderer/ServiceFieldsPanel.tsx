@@ -222,22 +222,24 @@ export function ServiceFieldsPanel({ project, serviceName }: ServiceFieldsPanelP
         <p className="eyebrow">Environment</p>
         {environment.map((entry, index) => (
           <div key={index} className="service-fields__row">
-            <input
-              className="settings-input"
-              value={entry.key}
-              placeholder="KEY"
-              onChange={(event) =>
-                setEnvironment((current) => replaceAt(current, index, { ...entry, key: event.target.value }))
-              }
-            />
-            <input
-              className="settings-input"
-              value={entry.value}
-              placeholder="value"
-              onChange={(event) =>
-                setEnvironment((current) => replaceAt(current, index, { ...entry, value: event.target.value }))
-              }
-            />
+            <div className="service-fields__env-inputs">
+              <input
+                className="settings-input"
+                value={entry.key}
+                placeholder="KEY"
+                onChange={(event) =>
+                  setEnvironment((current) => replaceAt(current, index, { ...entry, key: event.target.value }))
+                }
+              />
+              <input
+                className="settings-input"
+                value={entry.value}
+                placeholder="value"
+                onChange={(event) =>
+                  setEnvironment((current) => replaceAt(current, index, { ...entry, value: event.target.value }))
+                }
+              />
+            </div>
             <button
               type="button"
               className="icon-button icon-button--tiny"
