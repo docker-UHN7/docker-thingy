@@ -9,5 +9,7 @@ export const IPC_CHANNELS = {
   UPDATE_SETTINGS: "app:update-settings",
   CLEAR_RECENTS: "app:clear-recents",
   RUN_PROJECT_ACTION: "app:run-project-action",
-  BUILD_EVENT: "build:event"
+  BUILD_EVENT: "build:event",
+  NETWORK_GET_TOPOLOGY: "network:get-topology",
+  NETWORK_RUN_ACTION: "network:run-action"
 } as const;

@@ -1,0 +1,11 @@
+<domain type='kvm'>
+  <name>lonely-vm</name>
+  <uuid>11111111-2222-3333-4444-555555555555</uuid>
+  <devices>
+    <interface type='network'>
+      <mac address='52:54:00:11:22:33'/>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+  </devices>
+</domain>

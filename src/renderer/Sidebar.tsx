@@ -1,4 +1,4 @@
-import { FolderPlus, LoaderCircle, MoonStar, RefreshCw, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
+import { FolderPlus, LoaderCircle, MoonStar, Network, RefreshCw, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState, type DragEvent } from "react";
 import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contracts";
 import { useAppStore } from "./store";
@@ -17,6 +17,7 @@ type SidebarProps = {
   onOpenSourcePath(sourcePath: string): void;
   onOpenRecent(sourcePath: string): void;
   onToggleTheme(): void;
+  onOpenNetwork(): void;
   recents: string[];
   recentLoadingPath?: string | undefined;
   settings?: AppSettings | undefined;
@@ -60,6 +61,7 @@ export function Sidebar({
   onOpenSourcePath,
   onOpenRecent,
   onToggleTheme,
+  onOpenNetwork,
   recents,
   recentLoadingPath,
   settings
@@ -117,6 +119,9 @@ export function Sidebar({
         </div>
 
         <div className="topbar__controls">
+          <button className="icon-button" onClick={onOpenNetwork} aria-label="Network topology">
+            <Network size={16} />
+          </button>
           <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
             {theme === "dark" ? <SunMedium size={16} /> : <MoonStar size={16} />}
           </button>

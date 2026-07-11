@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { NetworkTopologyView } from "./network/NetworkTopologyView";
 import { useAppStore } from "./store";
 
 export function App() {
@@ -17,7 +18,7 @@ export function App() {
   const selectProject = useAppStore((state) => state.selectProject);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const activeProject = useAppStore((state) => state.activeProject());
-  const [screen, setScreen] = useState<"launcher" | "workspace">("launcher");
+  const [screen, setScreen] = useState<"launcher" | "workspace" | "network">("launcher");
 
   const settings = snapshot?.settings;
 
@@ -75,6 +76,7 @@ export function App() {
             setScreen("workspace");
           }}
           onToggleTheme={() => void cycleTheme()}
+          onOpenNetwork={() => setScreen("network")}
           recents={snapshot?.recents ?? []}
           recentLoadingPath={recentLoadingPath}
           settings={snapshot?.settings}
@@ -93,6 +95,10 @@ export function App() {
           onRefresh={() => void refreshRuntime()}
           onToggleTheme={() => void cycleTheme()}
         />
+      ) : null}
+
+      {screen === "network" ? (
+        <NetworkTopologyView theme={theme} onBack={() => setScreen("launcher")} onToggleTheme={() => void cycleTheme()} />
       ) : null}
     </div>
   );

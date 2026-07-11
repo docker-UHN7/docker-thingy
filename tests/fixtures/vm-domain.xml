@@ -1,0 +1,17 @@
+<domain type='kvm'>
+  <name>splunk-lab</name>
+  <uuid>e218c8f4-7601-46a4-a963-85aee31e62cd</uuid>
+  <memory unit='KiB'>16777216</memory>
+  <devices>
+    <interface type='network'>
+      <mac address='52:54:00:fc:c6:27'/>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+    <interface type='bridge'>
+      <mac address='52:54:00:aa:bb:cc'/>
+      <source bridge='br-lan'/>
+      <model type='virtio'/>
+    </interface>
+  </devices>
+</domain>
