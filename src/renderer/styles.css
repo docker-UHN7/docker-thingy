@@ -72,6 +72,13 @@
   color-scheme: dark;
 }
 
+.app-shell,
+.app-shell *,
+.app-shell *::before,
+.app-shell *::after {
+  transition: none !important;
+}
+
 *,
 *::before,
 *::after {

@@ -66,6 +66,7 @@ type AppState = {
   snapshot: AppSnapshot | null;
   loading: boolean;
   theme: "dark" | "light";
+  themeModePreference: ThemeMode | undefined;
   error: string | undefined;
   recentLoadingPath: string | undefined;
   operations: Record<string, OperationState>;
@@ -76,6 +77,7 @@ type AppState = {
   openSourcePath(sourcePath: string): Promise<void>;
   openRecentSource(sourcePath: string): Promise<void>;
   selectProject(projectId: string): void;
+  toggleTheme(): void;
   updateSettings(settings: Partial<AppSettings>): Promise<void>;
   clearRecents(): Promise<void>;
   activeProject(): ProjectSummary | undefined;
@@ -83,11 +85,15 @@ type AppState = {
   handleOperationEvent(event: OperationEvent): void;
 };
 
+let pendingThemePersistTimer: ReturnType<typeof setTimeout> | undefined;
+let pendingThemePersistMode: ThemeMode | undefined;
+
 export const useAppStore = create<AppState>((set, get) => ({
   snapshot: null,
   operations: {},
   loading: true,
   theme: "dark",
+  themeModePreference: undefined,
   error: undefined,
   recentLoadingPath: undefined,
   selectedProjectId: undefined,
@@ -96,6 +102,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     try {
       const snapshot = await window.dockerExplorer.getSnapshot();
+      const effectiveSnapshot = {
+        ...snapshot,
+        settings: {
+          ...snapshot.settings,
+          themeMode: get().themeModePreference ?? snapshot.settings.themeMode
+        }
+      };
     
       // Hjelpefunksjon for å validere at ID-en faktisk finnes
       const isValidId = (id: string | undefined) => 
@@ -108,9 +121,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       set({
-        snapshot,
+        snapshot: effectiveSnapshot,
         loading: false,
-        theme: deriveTheme(snapshot.settings.themeMode),
+        theme: deriveTheme(effectiveSnapshot.settings.themeMode),
         selectedProjectId: initialSelection
       });
 
@@ -119,22 +132,30 @@ export const useAppStore = create<AppState>((set, get) => ({
         // Runtime discovery failed, but we still have the (empty) snapshot to show -
         // surface the error instead of silently pretending everything is fine.
         set({
-          snapshot,
+          snapshot: effectiveSnapshot,
           loading: false,
           error: runtimeResult.error.message,
-          theme: deriveTheme(snapshot.settings.themeMode)
+          theme: deriveTheme(effectiveSnapshot.settings.themeMode)
         });
         return;
       }
 
+      const runtimeSnapshot = {
+        ...runtimeResult.data,
+        settings: {
+          ...runtimeResult.data.settings,
+          themeMode: get().themeModePreference ?? runtimeResult.data.settings.themeMode
+        }
+      };
+
       set({
-        snapshot: runtimeResult.data,
+        snapshot: runtimeSnapshot,
         loading: false,
-        theme: deriveTheme(runtimeResult.data.settings.themeMode),
+        theme: deriveTheme(runtimeSnapshot.settings.themeMode),
         selectedProjectId: reconcileSelectedProjectId(
           get().selectedProjectId,
-          runtimeResult.data.projects,
-          runtimeResult.data.activeProjectId
+          runtimeSnapshot.projects,
+          runtimeSnapshot.activeProjectId
         )
       });
     } catch (error) {
@@ -153,13 +174,21 @@ export const useAppStore = create<AppState>((set, get) => ({
         return;
       }
 
+      const runtimeSnapshot = {
+        ...result.data,
+        settings: {
+          ...result.data.settings,
+          themeMode: get().themeModePreference ?? result.data.settings.themeMode
+        }
+      };
+
       set({
-        snapshot: result.data,
+        snapshot: runtimeSnapshot,
         loading: false,
-        theme: deriveTheme(result.data.settings.themeMode),
+        theme: deriveTheme(runtimeSnapshot.settings.themeMode),
         // No seed hint here: after boot, main's activeProjectId is stale.
         // Keep whatever the user selected as long as it still exists.
-        selectedProjectId: reconcileSelectedProjectId(get().selectedProjectId, result.data.projects)
+        selectedProjectId: reconcileSelectedProjectId(get().selectedProjectId, runtimeSnapshot.projects)
       });
     } catch (error) {
       set({
@@ -313,17 +342,85 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectProject(projectId) {
     set({ selectedProjectId: projectId });
   },
+  toggleTheme() {
+    const nextMode: ThemeMode = get().theme === "dark" ? "light" : "dark";
+    void get().updateSettings({ themeMode: nextMode });
+  },
   async updateSettings(settings) {
+    const currentSnapshot = get().snapshot;
+    const nextThemeMode = settings.themeMode;
+
+    if (nextThemeMode) {
+      const optimisticTheme = deriveTheme(nextThemeMode);
+      set((state) => ({
+        snapshot: state.snapshot
+          ? {
+              ...state.snapshot,
+              settings: {
+                ...state.snapshot.settings,
+                ...settings
+              }
+            }
+          : state.snapshot,
+        error: undefined,
+        theme: optimisticTheme,
+        themeModePreference: nextThemeMode
+      }));
+
+      if (pendingThemePersistTimer) {
+        clearTimeout(pendingThemePersistTimer);
+      }
+
+      pendingThemePersistMode = nextThemeMode;
+      pendingThemePersistTimer = setTimeout(() => {
+        const modeToPersist = pendingThemePersistMode;
+        pendingThemePersistMode = undefined;
+        pendingThemePersistTimer = undefined;
+
+        if (!modeToPersist) {
+          return;
+        }
+
+        void window.dockerExplorer.updateSettings({ themeMode: modeToPersist })
+          .then((snapshot) => {
+            set({
+              snapshot: {
+                ...snapshot,
+                settings: {
+                  ...snapshot.settings,
+                  themeMode: pendingThemePersistMode ?? snapshot.settings.themeMode
+                }
+              },
+              error: undefined,
+              theme: deriveTheme(snapshot.settings.themeMode),
+              themeModePreference: undefined
+            });
+          })
+          .catch((error) => {
+            set({
+              snapshot: currentSnapshot,
+              error: error instanceof Error ? error.message : "Failed to update settings.",
+              themeModePreference: undefined
+            });
+          });
+      }, 0);
+
+      return;
+    }
+
     try {
       const snapshot = await window.dockerExplorer.updateSettings(settings);
       set({
         snapshot,
         error: undefined,
-        theme: deriveTheme(snapshot.settings.themeMode)
+        theme: deriveTheme(snapshot.settings.themeMode),
+        themeModePreference: undefined
       });
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : "Failed to update settings."
+        snapshot: currentSnapshot,
+        error: error instanceof Error ? error.message : "Failed to update settings.",
+        themeModePreference: undefined
       });
     }
   },

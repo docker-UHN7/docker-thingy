@@ -15,17 +15,11 @@ export function App() {
   const openSourcePath = useAppStore((state) => state.openSourcePath);
   const openRecentSource = useAppStore((state) => state.openRecentSource);
   const selectProject = useAppStore((state) => state.selectProject);
-  const updateSettings = useAppStore((state) => state.updateSettings);
+  const toggleTheme = useAppStore((state) => state.toggleTheme);
   const activeProject = useAppStore((state) => state.activeProject());
   const [screen, setScreen] = useState<"launcher" | "workspace">("launcher");
 
   const settings = snapshot?.settings;
-
-  async function cycleTheme() {
-    const current = settings?.themeMode ?? "dark";
-    const next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
-    await updateSettings({ themeMode: next });
-  }
 
   useEffect(() => {
     void bootstrap();
@@ -74,7 +68,7 @@ export function App() {
             await openRecentSource(sourcePath);
             setScreen("workspace");
           }}
-          onToggleTheme={() => void cycleTheme()}
+          onToggleTheme={() => toggleTheme()}
           recents={snapshot?.recents ?? []}
           recentLoadingPath={recentLoadingPath}
           settings={snapshot?.settings}
@@ -91,7 +85,7 @@ export function App() {
           error={error}
           onBack={() => setScreen("launcher")}
           onRefresh={() => void refreshRuntime()}
-          onToggleTheme={() => void cycleTheme()}
+          onToggleTheme={() => toggleTheme()}
         />
       ) : null}
     </div>
