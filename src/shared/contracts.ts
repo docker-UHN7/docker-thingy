@@ -248,7 +248,7 @@ export type ProjectDiagnostics = {
 };
 
 export type ProjectAction = {
-  id: "refresh" | "open-source" | "validate" | "start" | "apply-start" | "stop" | "build-image";
+  id: "open-source" | "validate" | "start" | "apply-start" | "stop" | "build-image";
   label: string;
   emphasis?: "primary" | "danger" | "neutral" | undefined;
   disabled?: boolean | undefined;
@@ -301,7 +301,6 @@ export type SourceSession = {
 
 export const AppSettingsSchema = z.object({
   themeMode: z.enum(["light", "dark", "system"]),
-  runtimeRefreshSeconds: z.number().int().positive().nullable(),
   statsPollSeconds: z.number().int().positive().nullable(),
   logTailLines: z.number().int().positive().max(10_000)
 });
@@ -318,7 +317,6 @@ export type AppSnapshot = {
 };
 
 export type OpenSourceResult = Result<ProjectSummary>;
-export type RefreshRuntimeResult = Result<AppSnapshot>;
 export type LogSnapshotResult = Result<{
   containerId: string;
   lines: string[];
@@ -380,7 +378,6 @@ export type ProjectActionResult = Result<{
 
 export type PreloadApi = {
   getSnapshot(): Promise<AppSnapshot>;
-  refreshRuntime(): Promise<RefreshRuntimeResult>;
   openSource(): Promise<OpenSourceResult>;
   openSourcePath(sourcePath: string): Promise<OpenSourceResult>;
   openRecentSource(sourcePath: string): Promise<OpenSourceResult>;
@@ -390,4 +387,5 @@ export type PreloadApi = {
   clearRecents(): Promise<AppSnapshot>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
+  subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;
 };

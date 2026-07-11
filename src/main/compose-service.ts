@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { Document } from "yaml";
 import type {
@@ -337,6 +338,20 @@ function buildRelationshipEdges(services: ServiceNodeModel[]): RelationshipEdge[
   return output;
 }
 
+function deriveComposeProjectTitle(document: Document, sourcePath: string): string {
+  const declaredName = document.get("name");
+  if (typeof declaredName === "string" && declaredName.trim() !== "") {
+    return declaredName.trim();
+  }
+
+  const parentDirectory = basename(dirname(sourcePath));
+  if (parentDirectory.trim() !== "") {
+    return parentDirectory;
+  }
+
+  return sourcePath.split(/[/\\]/).at(-1) ?? sourcePath;
+}
+
 function toServiceModels(document: Document): ServiceNodeModel[] {
   const servicesNode = document.get("services", true);
   if (!isMap(servicesNode)) {
@@ -420,12 +435,12 @@ export async function loadComposeProject(sourcePath: string, contextName: string
 
   return {
     id: `source-compose:${contextName}:${sourcePath}`,
-    title: sourcePath.split(/[/\\]/).at(-1) ?? sourcePath,
+    title: deriveComposeProjectTitle(document, sourcePath),
     subtitle: "Explicitly opened Compose source",
     runtimeKind: "compose",
     access: "editable",
     contextName,
-    composeProjectName: undefined,
+    composeProjectName: deriveComposeProjectTitle(document, sourcePath),
     sourcePath,
     configFiles: [sourcePath],
     services,

@@ -1,4 +1,4 @@
-import { FolderPlus, LoaderCircle, MoonStar, RefreshCw, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
+import { FolderPlus, LoaderCircle, MoonStar, Search, Settings, SunMedium, TriangleAlert, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState, type DragEvent } from "react";
 import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contracts";
 import { useAppStore } from "./store";
@@ -13,7 +13,6 @@ type SidebarProps = {
   error: string | undefined;
   theme: "dark" | "light";
   onSelect(projectId: string): void;
-  onRefresh(): void;
   onOpenSource(): void;
   onOpenSourcePath(sourcePath: string): void;
   onOpenRecent(sourcePath: string): void;
@@ -45,7 +44,6 @@ export function Sidebar({
   error,
   theme,
   onSelect,
-  onRefresh,
   onOpenSource,
   onOpenSourcePath,
   onOpenRecent,
@@ -130,9 +128,6 @@ export function Sidebar({
             <span>Docker daemon not detected. Start Docker to see live container status.</span>
           </div>
           <div className="daemon-banner__actions">
-            <button className="icon-button" onClick={onRefresh} aria-label="Retry runtime discovery">
-              <RefreshCw size={16} className={loading ? "busy" : undefined} />
-            </button>
             <button className="icon-button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss banner">
               <X size={16} />
             </button>
@@ -161,12 +156,7 @@ export function Sidebar({
           </label>
 
           <div className="launcher-meta">
-            {loading ? <span className="toolbar-note">Refreshing runtime...</span> : null}
-            {settings?.runtimeRefreshSeconds ? (
-              <span className="toolbar-note">Refresh every {settings.runtimeRefreshSeconds}s</span>
-            ) : (
-              <span className="toolbar-note">Manual refresh only</span>
-            )}
+            <span className="toolbar-note">{loading ? "Syncing Docker runtime..." : "Watching Docker runtime"}</span>
           </div>
         </div>
 

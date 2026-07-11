@@ -1,4 +1,4 @@
-import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, type ReactFlowInstance } from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, ReactFlow, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Edge, Node } from "@xyflow/react";
@@ -18,7 +18,6 @@ type GraphViewProps = {
   filterQuery: string;
   selectedNodeId: string | undefined;
   layoutDirection: "RIGHT" | "DOWN";
-  fitNonce: number;
   children?: ReactNode;
   onSelectNode(nodeId: string): void;
   onClearSelection(): void;
@@ -53,7 +52,6 @@ export function GraphView({
   filterQuery,
   selectedNodeId,
   layoutDirection,
-  fitNonce,
   children,
   onSelectNode,
   onClearSelection
@@ -107,11 +105,6 @@ export function GraphView({
       cancelled = true;
     };
   }, [project, layoutDirection, scheduleFitView]);
-
-  useEffect(() => {
-    scheduleFitView();
-  }, [fitNonce, scheduleFitView]);
-
   const related = useMemo(() => relatedNodes(project, selectedNodeId), [project, selectedNodeId]);
 
   const nodes = useMemo<Node[]>(() => {
@@ -178,6 +171,8 @@ export function GraphView({
         edges={edges}
         nodeTypes={nodeTypes}
         fitView={false}
+        minZoom={0.2}
+        maxZoom={1.6}
         proOptions={{ hideAttribution: true }}
         nodesDraggable={false}
         onPaneClick={() => onClearSelection()}
@@ -192,8 +187,7 @@ export function GraphView({
         }}
       >
         {children}
-        <MiniMap className="graph-minimap" pannable zoomable />
-        <Controls showInteractive={false} />
+        <Controls showInteractive={false} showFitView fitViewOptions={{ padding: 0.18, duration: 220 }} />
         <Background variant={BackgroundVariant.Dots} color="var(--border-subtle)" gap={20} size={1} />
       </ReactFlow>
     </div>

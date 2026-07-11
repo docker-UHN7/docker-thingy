@@ -1,5 +1,7 @@
 import { dialog } from "electron";
 import { randomUUID } from "node:crypto";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { watch, type FSWatcher } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
@@ -115,7 +117,6 @@ async function resolveSourcePathFromDirectory(directoryPath: string): Promise<st
 
 const DEFAULT_SETTINGS: AppSettings = {
   themeMode: "dark",
-  runtimeRefreshSeconds: 3,
   statsPollSeconds: 3,
   logTailLines: 200
 };
@@ -123,7 +124,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export class ProjectService {
   // Every public method below reads `this.snapshot`, awaits I/O, then writes
   // a new snapshot back. Without serializing those read-await-write spans,
-  // two concurrent calls (e.g. refreshRuntime racing an openSourcePath) could
+  // two concurrent calls (e.g. runtime sync racing an openSourcePath) could
   // interleave, and whichever resolves last would silently clobber the
   // other's update. withLock chains mutating operations onto a single
   // promise so they always run to completion one at a time, in call order.
@@ -142,10 +143,18 @@ export class ProjectService {
   // (validate/apply-start/stop/build-image) in flight, keyed by project id.
   // Deliberately NOT folded into `lock`: that lock only guards short
   // read-await-write snapshot spans, whereas a build can run for minutes and
-  // must not block unrelated snapshot reads/writes (e.g. refreshing a
+  // must not block unrelated snapshot reads/writes (e.g. synchronizing a
   // different project) for that whole time. This map is the concurrency
   // guard for "don't start a second operation on the same project".
   private activeOperations = new Map<string, ExecutableProjectActionId>();
+  private snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
+  private sourceWatchers = new Map<string, FSWatcher>();
+  private sourceReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private runtimeSyncTimer: ReturnType<typeof setTimeout> | undefined;
+  private dockerEventRestartTimer: ReturnType<typeof setTimeout> | undefined;
+  private dockerEventBuffer = "";
+  private dockerEventProcess: ChildProcessWithoutNullStreams | undefined;
+  private disposed = false;
 
   private snapshot: AppSnapshot = {
     dockerStatus: {
@@ -160,11 +169,200 @@ export class ProjectService {
     settings: DEFAULT_SETTINGS
   };
 
+  subscribeSnapshots(listener: (snapshot: AppSnapshot) => void): () => void {
+    this.snapshotListeners.add(listener);
+    return () => {
+      this.snapshotListeners.delete(listener);
+    };
+  }
+
+  startAutoSync(): void {
+    this.reconcileSourceWatchers();
+    this.ensureDockerEventStream();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    if (this.runtimeSyncTimer) {
+      clearTimeout(this.runtimeSyncTimer);
+      this.runtimeSyncTimer = undefined;
+    }
+    if (this.dockerEventRestartTimer) {
+      clearTimeout(this.dockerEventRestartTimer);
+      this.dockerEventRestartTimer = undefined;
+    }
+    if (this.dockerEventProcess && !this.dockerEventProcess.killed) {
+      this.dockerEventProcess.kill();
+    }
+    this.dockerEventProcess = undefined;
+    for (const timer of this.sourceReloadTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.sourceReloadTimers.clear();
+    for (const watcher of this.sourceWatchers.values()) {
+      watcher.close();
+    }
+    this.sourceWatchers.clear();
+  }
+
+  private emitSnapshot(): void {
+    this.reconcileSourceWatchers();
+    for (const listener of this.snapshotListeners) {
+      listener(this.snapshot);
+    }
+  }
+
+  private scheduleRuntimeSync(delayMs = 180): void {
+    if (this.runtimeSyncTimer) {
+      clearTimeout(this.runtimeSyncTimer);
+    }
+
+    this.runtimeSyncTimer = setTimeout(() => {
+      this.runtimeSyncTimer = undefined;
+      void this.synchronizeSnapshot();
+    }, delayMs);
+  }
+
+  private ensureDockerEventStream(): void {
+    if (this.disposed || this.dockerEventProcess) {
+      return;
+    }
+
+    const child = spawn("docker", ["events", "--format", "{{json .}}"], {
+      windowsHide: true
+    });
+    this.dockerEventProcess = child;
+    this.dockerEventBuffer = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      this.dockerEventBuffer += chunk.toString("utf8");
+      const lines = this.dockerEventBuffer.split(/\r?\n/);
+      this.dockerEventBuffer = lines.pop() ?? "";
+      if (lines.some((line) => line.trim().length > 0)) {
+        this.scheduleRuntimeSync();
+      }
+    });
+
+    child.on("error", () => {
+      this.dockerEventProcess = undefined;
+      this.scheduleDockerEventRestart();
+    });
+
+    child.on("close", () => {
+      this.dockerEventProcess = undefined;
+      this.scheduleDockerEventRestart();
+    });
+  }
+
+  private scheduleDockerEventRestart(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    if (this.dockerEventRestartTimer) {
+      clearTimeout(this.dockerEventRestartTimer);
+    }
+
+    this.dockerEventRestartTimer = setTimeout(() => {
+      this.dockerEventRestartTimer = undefined;
+      this.ensureDockerEventStream();
+    }, 3_000);
+  }
+
+  private reconcileSourceWatchers(): void {
+    const watchedPaths = new Set(
+      this.snapshot.projects
+        .filter((project) => project.access !== "runtime-only")
+        .map((project) => project.sourcePath)
+        .filter((sourcePath): sourcePath is string => Boolean(sourcePath))
+    );
+
+    for (const [sourcePath, watcher] of this.sourceWatchers) {
+      if (watchedPaths.has(sourcePath)) {
+        continue;
+      }
+      watcher.close();
+      this.sourceWatchers.delete(sourcePath);
+    }
+
+    for (const sourcePath of watchedPaths) {
+      if (this.sourceWatchers.has(sourcePath)) {
+        continue;
+      }
+
+      try {
+        const watcher = watch(sourcePath, { persistent: false }, () => {
+          this.scheduleSourceReload(sourcePath);
+        });
+        watcher.on("error", () => {
+          watcher.close();
+          this.sourceWatchers.delete(sourcePath);
+        });
+        this.sourceWatchers.set(sourcePath, watcher);
+      } catch {
+        // Ignore watch failures for paths that momentarily disappear.
+      }
+    }
+  }
+
+  private scheduleSourceReload(sourcePath: string): void {
+    const existing = this.sourceReloadTimers.get(sourcePath);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.sourceReloadTimers.delete(sourcePath);
+      void this.reloadSourceProject(sourcePath);
+    }, 180);
+
+    this.sourceReloadTimers.set(sourcePath, timer);
+  }
+
+  private async reloadSourceProject(sourcePath: string): Promise<void> {
+    try {
+      await access(sourcePath);
+      const project = await this.loadProjectFromPath(sourcePath);
+      const sourceText = await readFile(sourcePath, "utf8");
+
+      await this.withLock(async () => {
+        const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+        const sourceProjects = this.snapshot.projects.filter(
+          (entry) => entry.access !== "runtime-only" && entry.sourcePath !== sourcePath && entry.id !== project.id
+        );
+        const mergedProjects = mergeProjectLists(project.contextName, [project, ...sourceProjects], runtimeProjects);
+
+        this.snapshot = {
+          ...this.snapshot,
+          projects: mergedProjects,
+          recents: [sourcePath, ...this.snapshot.recents.filter((entry) => entry !== sourcePath)].slice(0, 12),
+          activeProjectId:
+            this.snapshot.activeProjectId && mergedProjects.some((entry) => entry.id === this.snapshot.activeProjectId)
+              ? this.snapshot.activeProjectId
+              : mergedProjects[0]?.id,
+          activeSourceSession:
+            this.snapshot.activeSourceSession?.sourcePath === sourcePath
+              ? {
+                  ...this.snapshot.activeSourceSession,
+                  revision: this.snapshot.activeSourceSession.revision + 1,
+                  lastKnownHash: hashSource(sourceText),
+                  diffPreview: "Updated from disk"
+                }
+              : this.snapshot.activeSourceSession
+        };
+      });
+
+      this.emitSnapshot();
+    } catch {
+      // Ignore transient source reload errors and keep the last known snapshot.
+    }
+  }
+
   async getSnapshot(): Promise<AppSnapshot> {
     return this.snapshot;
   }
 
-  async refreshRuntime(): Promise<AppSnapshot> {
+  async synchronizeSnapshot(): Promise<AppSnapshot> {
     return this.withLock(async () => {
       try {
         const dockerStatus = await detectDockerStatus();
@@ -174,7 +372,7 @@ export class ProjectService {
         // Dedupe: a project opened from source and its runtime-discovered twin
         // (same resolved Compose file) are merged into one card here rather
         // than shown side by side - see mergeProjectLists for why that matters
-        // for keeping the active selection stable across refreshes.
+        // for keeping the active selection stable across live syncs.
         const projects = mergeProjectLists(contextName, sourceProjects, runtimeProjects);
         // Only remember paths we've actually confirmed exist/loaded (a source
         // project's own sourcePath, or a runtime project's sourcePath once
@@ -203,6 +401,7 @@ export class ProjectService {
               : projects[0]?.id
         };
 
+        this.emitSnapshot();
         return this.snapshot;
       } catch {
         this.snapshot = {
@@ -213,13 +412,14 @@ export class ProjectService {
             composeAvailable: false,
             buildxAvailable: false,
             contextName: this.snapshot.dockerStatus.contextName,
-            message: "Docker status could not be refreshed right now.",
+            message: "Docker status could not be synchronized right now.",
             checkedAt: new Date().toISOString()
           },
           projects: this.snapshot.projects.filter((project) => project.access !== "runtime-only"),
           activeProjectId: this.snapshot.activeProjectId
         };
 
+        this.emitSnapshot();
         return this.snapshot;
       }
     });
@@ -254,6 +454,7 @@ export class ProjectService {
         diffPreview: "No pending changes"
       }
     };
+    this.emitSnapshot();
 
     return {
       ok: true,
@@ -376,7 +577,7 @@ export class ProjectService {
    * resolves the project purely from the id (the renderer never sends a raw
    * path or command fragment), refuses to double-run on the same project,
    * streams progress via `onEvent`, then folds the outcome into the snapshot
-   * and - for anything that can change container state - refreshes runtime
+   * and - for anything that can change container state - synchronizes runtime
    * so the graph reflects it.
    */
   async runProjectAction(
@@ -397,11 +598,11 @@ export class ProjectService {
 
     const project = this.snapshot.projects.find((entry) => entry.id === projectId);
     if (!project) {
-      return {
-        ok: false,
-        error: { code: "VALIDATION_FAILED", message: "That project is no longer available. Refresh and try again." }
-      };
-    }
+        return {
+          ok: false,
+        error: { code: "VALIDATION_FAILED", message: "That project is no longer available. Reopen it and try again." }
+        };
+      }
 
     if (!project.actions.some((action) => action.id === actionId)) {
       return {
@@ -432,7 +633,7 @@ export class ProjectService {
       if (actionId !== "validate") {
         // Container state changed (or was attempted to change) - pull fresh
         // runtime data so the graph/status dots reflect it immediately.
-        snapshot = await this.refreshRuntime();
+        snapshot = await this.synchronizeSnapshot();
       }
 
       onEvent({
@@ -499,6 +700,7 @@ export class ProjectService {
             : project
         )
       };
+      this.emitSnapshot();
 
       return this.snapshot;
     });
@@ -513,6 +715,7 @@ export class ProjectService {
           ...sanitizeSettingsPatch(settings)
         }
       };
+      this.emitSnapshot();
 
       return this.snapshot;
     });
@@ -524,6 +727,7 @@ export class ProjectService {
         ...this.snapshot,
         recents: []
       };
+      this.emitSnapshot();
 
       return this.snapshot;
     });

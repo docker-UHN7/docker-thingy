@@ -3,11 +3,8 @@ import {
   LayoutPanelTop,
   LoaderCircle,
   MoonStar,
-  PanelRightOpen,
-  RefreshCw,
   ScanSearch,
   Settings,
-  Shrink,
   SunMedium,
   TriangleAlert,
   X
@@ -28,7 +25,6 @@ import { Inspector } from "./Inspector";
 import { LogsPanel } from "./LogsPanel";
 import { OperationProgressPanel } from "./OperationProgressPanel";
 import { ProjectActionToolbar } from "./ProjectActionToolbar";
-import { ValidateStatusPanel } from "./ValidateStatusPanel";
 import { GraphView } from "./graph/GraphView";
 import { deriveProjectLifecycle } from "./project-state";
 import { useAppStore } from "./store";
@@ -41,7 +37,6 @@ type ProjectWorkspaceProps = {
   loading: boolean;
   error: string | undefined;
   onBack(): void;
-  onRefresh(): void;
   onToggleTheme(): void;
 };
 
@@ -93,7 +88,6 @@ export function ProjectWorkspace({
   loading,
   error,
   onBack,
-  onRefresh,
   onToggleTheme
 }: ProjectWorkspaceProps) {
   const [query, setQuery] = useState("");
@@ -101,8 +95,8 @@ export function ProjectWorkspace({
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
   const [layoutDirection, setLayoutDirection] = useState<"RIGHT" | "DOWN">("RIGHT");
-  const [fitNonce, setFitNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dismissedValidationOperationId, setDismissedValidationOperationId] = useState<string | undefined>();
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   const deferredQuery = useDeferredValue(query);
@@ -122,6 +116,12 @@ export function ProjectWorkspace({
       setSelectedNodeId(undefined);
     }
   }, [project, selectedNodeId]);
+
+  useEffect(() => {
+    if (operation?.actionId === "validate" && operation.status === "running" && dismissedValidationOperationId) {
+      setDismissedValidationOperationId(undefined);
+    }
+  }, [operation?.actionId, operation?.status, operation?.operationId, operation?.startedAt, dismissedValidationOperationId]);
 
   const visibleEnv = useMemo(() => {
     const env = selectedService?.details?.env ?? [];
@@ -162,7 +162,7 @@ export function ProjectWorkspace({
 
     void loadLogs();
 
-    const intervalMs = settings.runtimeRefreshSeconds ? settings.runtimeRefreshSeconds * 1000 : null;
+    const intervalMs = settings?.statsPollSeconds ? settings.statsPollSeconds * 1000 : null;
     const intervalId = intervalMs ? window.setInterval(() => void loadLogs(), intervalMs) : undefined;
 
     return () => {
@@ -171,7 +171,7 @@ export function ProjectWorkspace({
         window.clearInterval(intervalId);
       }
     };
-  }, [detailTab, selectedService?.details?.containerId, settings?.logTailLines, settings?.runtimeRefreshSeconds]);
+  }, [detailTab, selectedService?.details?.containerId, settings?.logTailLines, settings?.statsPollSeconds]);
 
   useEffect(() => {
     const containerId = selectedService?.details?.containerId;
@@ -280,16 +280,12 @@ export function ProjectWorkspace({
   const uptimeLabel = relativeTimeLabel(selectedService?.details?.runtimeState.startedAt);
   const validationOperation = operation?.actionId === "validate" ? operation : undefined;
   const actionOperation = operation && operation.actionId !== "validate" ? operation : undefined;
+  const validationOperationKey = validationOperation?.operationId || validationOperation?.startedAt;
+  const visibleValidationOperation =
+    validationOperation && validationOperationKey !== dismissedValidationOperationId ? validationOperation : undefined;
 
   return (
     <main className="workspace-screen">
-      <header className="topbar topbar--workspace">
-        <div className="brand-lockup">
-          <div className="brand-mark">DG</div>
-          <h1 className="brand-title">Docker Graph</h1>
-        </div>
-      </header>
-
       {error ? (
         <div className="error-banner error-banner--inline">
           <TriangleAlert size={16} />
@@ -303,7 +299,6 @@ export function ProjectWorkspace({
           filterQuery={deferredQuery}
           selectedNodeId={selectedNodeId}
           layoutDirection={layoutDirection}
-          fitNonce={fitNonce}
           onSelectNode={(nodeId) => {
             setSelectedNodeId(nodeId);
             setDetailTab("overview");
@@ -331,13 +326,8 @@ export function ProjectWorkspace({
                   </div>
                 </div>
 
-                <div>
-                  <p className="eyebrow">{project.contextName}</p>
-                  <div className="stage-meta">
-                    <span className="manifest-tag">{project.access}</span>
-                    <span className="manifest-tag">{project.runtimeKind}</span>
-                    <span className="metadata-note">{project.lastUpdatedLabel}</span>
-                  </div>
+                <div className="workspace-project-card__meta">
+                  <span className="metadata-note">{project.contextName}</span>
                 </div>
               </div>
             </div>
@@ -362,12 +352,6 @@ export function ProjectWorkspace({
                   <LayoutPanelTop size={16} />
                   <span>{layoutDirection === "RIGHT" ? "Left to right" : "Top to bottom"}</span>
                 </button>
-                <button className="icon-button" onClick={() => setFitNonce((value) => value + 1)} aria-label="Fit view">
-                  <Shrink size={16} />
-                </button>
-                <button className="icon-button" onClick={onRefresh} aria-label="Refresh runtime">
-                  <RefreshCw size={16} className={loading ? "busy spin" : undefined} />
-                </button>
               </div>
 
               <div className="workspace-toolbar__divider" />
@@ -387,10 +371,6 @@ export function ProjectWorkspace({
                 <ProjectActionToolbar project={project} operation={operation} onRunAction={handleAction} />
               </div>
             </div>
-          </Panel>
-
-          <Panel position="top-center" style={{ margin: 16 }}>
-            <ValidateStatusPanel operation={validationOperation} />
           </Panel>
 
           <Panel position="bottom-center" style={{ margin: 16 }}>
@@ -413,6 +393,28 @@ export function ProjectWorkspace({
                   settings={settings}
                   onUpdate={(next) => void updateSettings(next)}
                   onClearRecents={() => void clearRecents()}
+                />
+              </aside>
+            ) : visibleValidationOperation ? (
+              <aside className="floating-panel detail-panel detail-panel--overlay">
+                <div className="detail-panel__header">
+                  <div>
+                    <p className="eyebrow">Detail Panel</p>
+                    <h3 className="panel-title">Validation</h3>
+                  </div>
+                  <button
+                    className="icon-button"
+                    onClick={() => setDismissedValidationOperationId(validationOperationKey)}
+                    aria-label="Close panel"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <OperationProgressPanel
+                  operation={visibleValidationOperation}
+                  projectTitle={project.title}
+                  variant="inline"
+                  includeValidate
                 />
               </aside>
             ) : selectedService ? (
@@ -525,18 +527,7 @@ export function ProjectWorkspace({
                   )
                 ) : null}
               </aside>
-            ) : (
-              <aside className="floating-panel detail-panel detail-panel--overlay detail-panel--empty">
-                <div className="detail-panel__empty-icon">
-                  <PanelRightOpen size={18} />
-                </div>
-                <p className="eyebrow">Detail Panel</p>
-                <h3 className="panel-title">No service selected</h3>
-                <p className="body-copy body-copy--secondary">
-                  Click a service node in the graph to inspect its overview, environment variables, mounts, and logs.
-                </p>
-              </aside>
-            )}
+            ) : null}
           </Panel>
         </GraphView>
       </section>

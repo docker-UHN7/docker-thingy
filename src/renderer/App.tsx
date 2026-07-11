@@ -10,7 +10,6 @@ export function App() {
   const error = useAppStore((state) => state.error);
   const recentLoadingPath = useAppStore((state) => state.recentLoadingPath);
   const bootstrap = useAppStore((state) => state.bootstrap);
-  const refreshRuntime = useAppStore((state) => state.refreshRuntime);
   const openSource = useAppStore((state) => state.openSource);
   const openSourcePath = useAppStore((state) => state.openSourcePath);
   const openRecentSource = useAppStore((state) => state.openRecentSource);
@@ -18,8 +17,6 @@ export function App() {
   const toggleTheme = useAppStore((state) => state.toggleTheme);
   const selectedProjectId = useAppStore((state) => state.selectedProjectId);
   const [screen, setScreen] = useState<"launcher" | "workspace">("launcher");
-
-  const settings = snapshot?.settings;
   const activeProject = useMemo(
     () => snapshot?.projects.find((project) => project.id === selectedProjectId),
     [snapshot?.projects, selectedProjectId]
@@ -28,22 +25,6 @@ export function App() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
-
-  // Periodic background refresh so running containers' status stays live
-  // without the user having to hit the manual refresh button. This is the
-  // "periodic runtime refresh" that used to be able to bounce the active
-  // project to an unrelated one on every tick - fixed at the source
-  // (ProjectService.refreshRuntime/mergeProjectLists), not by removing the
-  // poll.
-  useEffect(() => {
-    const seconds = settings?.runtimeRefreshSeconds;
-    if (!seconds) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => void refreshRuntime(), seconds * 1000);
-    return () => window.clearInterval(intervalId);
-  }, [settings?.runtimeRefreshSeconds, refreshRuntime]);
 
   return (
     <div className="app-shell" data-theme={theme}>
@@ -59,7 +40,6 @@ export function App() {
             selectProject(projectId);
             setScreen("workspace");
           }}
-          onRefresh={() => void refreshRuntime()}
           onOpenSource={async () => {
             const success = await openSource();
             if (success && useAppStore.getState().selectedProjectId) {
@@ -94,7 +74,6 @@ export function App() {
           loading={loading}
           error={error}
           onBack={() => setScreen("launcher")}
-          onRefresh={() => void refreshRuntime()}
           onToggleTheme={() => toggleTheme()}
         />
       ) : null}

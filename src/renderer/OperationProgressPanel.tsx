@@ -5,6 +5,8 @@ import type { OperationState } from "./store";
 type OperationProgressPanelProps = {
   operation: OperationState | undefined;
   projectTitle: string;
+  variant?: "floating" | "inline";
+  includeValidate?: boolean;
 };
 
 type ProgressStep = {
@@ -14,10 +16,24 @@ type ProgressStep = {
   details: string[];
 };
 
+function normalizeGenericLabel(line: string): string {
+  const trimmed = line.trim();
+  if (trimmed === "") {
+    return "Working";
+  }
+
+  return trimmed
+    .replace(/\s+(done|started|stopped|waiting|error|complete|completed)\b.*$/i, "")
+    .replace(/\s+\(\d+\/\d+\)\s*$/i, "")
+    .trim() || trimmed;
+}
+
 function operationLabel(actionId: OperationState["actionId"], projectTitle: string): string {
   switch (actionId) {
     case "build-image":
       return `Building ${projectTitle}`;
+    case "validate":
+      return `Validating ${projectTitle}`;
     case "stop":
       return `Stopping ${projectTitle}`;
     case "start":
@@ -29,6 +45,18 @@ function operationLabel(actionId: OperationState["actionId"], projectTitle: stri
   }
 }
 
+function summarizeOperation(operation: OperationState): string {
+  if (operation.status === "running") {
+    return operation.lines.at(-1) ?? "Working...";
+  }
+
+  if (operation.status === "success") {
+    return operation.actionId === "validate" ? "Validation passed." : "Operation completed successfully.";
+  }
+
+  return operation.errorMessage ?? (operation.lines.at(-1) || "Operation failed.");
+}
+
 function parseOperationSteps(operation: OperationState): ProgressStep[] {
   const steps: ProgressStep[] = [];
   const ensureStep = (key: string, label: string): ProgressStep => {
@@ -36,6 +64,8 @@ function parseOperationSteps(operation: OperationState): ProgressStep[] {
     if (!step) {
       step = { key, label, status: "pending", details: [] };
       steps.push(step);
+    } else if (label.trim() !== "") {
+      step.label = label;
     }
     return step;
   };
@@ -64,7 +94,8 @@ function parseOperationSteps(operation: OperationState): ProgressStep[] {
       continue;
     }
 
-    const generic = ensureStep(`generic-${steps.length}`, line);
+    const genericLabel = normalizeGenericLabel(line);
+    const generic = ensureStep(`generic:${genericLabel.toLowerCase()}`, genericLabel);
     generic.details.push(line);
     generic.status = operation.status === "failed" ? "failed" : operation.status === "success" ? "done" : "active";
   }
@@ -88,7 +119,12 @@ function parseOperationSteps(operation: OperationState): ProgressStep[] {
   return steps;
 }
 
-export function OperationProgressPanel({ operation, projectTitle }: OperationProgressPanelProps) {
+export function OperationProgressPanel({
+  operation,
+  projectTitle,
+  variant = "floating",
+  includeValidate = false
+}: OperationProgressPanelProps) {
   const [dismissedOperationId, setDismissedOperationId] = useState<string | undefined>();
   const [expandedKey, setExpandedKey] = useState<string | undefined>();
   const operationKey = operation ? operation.operationId || operation.startedAt : undefined;
@@ -99,7 +135,9 @@ export function OperationProgressPanel({ operation, projectTitle }: OperationPro
     }
 
     if (operation.status === "running") {
-      setDismissedOperationId(undefined);
+      if (dismissedOperationId !== undefined) {
+        setDismissedOperationId(undefined);
+      }
       return;
     }
 
@@ -110,17 +148,32 @@ export function OperationProgressPanel({ operation, projectTitle }: OperationPro
 
       return () => window.clearTimeout(timer);
     }
-  }, [operation, operationKey]);
+  }, [operation?.status, operation?.operationId, operation?.startedAt, dismissedOperationId, operationKey]);
 
   const steps = useMemo(() => (operation ? parseOperationSteps(operation) : []), [operation]);
-  if (!operation || operation.actionId === "validate" || dismissedOperationId === operationKey) {
+  const summary = useMemo(() => (operation ? summarizeOperation(operation) : ""), [operation]);
+
+  if (!operation || (!includeValidate && operation.actionId === "validate") || dismissedOperationId === operationKey) {
     return null;
   }
 
+  const containerClass =
+    variant === "inline"
+      ? "operation-progress operation-progress--inline"
+      : `floating-panel floating-panel--operation floating-panel--${
+          operation.status === "failed" ? "error" : operation.status === "success" ? "success" : "warning"
+        }`;
+
   return (
-    <div className={`floating-panel floating-panel--operation floating-panel--${operation.status === "failed" ? "error" : operation.status === "success" ? "success" : "warning"}`}>
+    <div className={containerClass}>
       <div className="operation-progress__header">
         <strong>{operationLabel(operation.actionId, projectTitle)}</strong>
+      </div>
+      <div className="validate-toast__header">
+        {operation.status === "running" ? <LoaderCircle size={14} className="busy spin" /> : null}
+        {operation.status === "success" ? <CheckCircle2 size={14} /> : null}
+        {operation.status === "failed" ? <AlertTriangle size={14} /> : null}
+        <span>{summary}</span>
       </div>
 
       <div className="operation-progress__steps">
@@ -138,9 +191,14 @@ export function OperationProgressPanel({ operation, projectTitle }: OperationPro
                 <span className="operation-progress__label">{step.label}</span>
               </div>
 
-              {active ? <div className="operation-progress__bar" /> : null}
+              <div className="operation-progress__track" aria-hidden="true">
+                <div
+                  className={`operation-progress__bar operation-progress__bar--${step.status}`}
+                  style={{ width: step.status === "done" ? "100%" : step.status === "failed" ? "100%" : step.status === "active" ? "55%" : "0%" }}
+                />
+              </div>
 
-              {failed ? (
+              {step.details.length > 0 ? (
                 <div className="operation-progress__failure">
                   <button className="validate-toast__toggle" onClick={() => setExpandedKey(expanded ? undefined : step.key)}>
                     <span>Details</span>

@@ -4,6 +4,7 @@ import type { OperationState } from "./store";
 
 type ValidateStatusPanelProps = {
   operation: OperationState | undefined;
+  variant?: "toast" | "panel";
 };
 
 function summarizeValidation(operation: OperationState): string {
@@ -20,18 +21,22 @@ function summarizeValidation(operation: OperationState): string {
   return operation.errorMessage ?? "Validation failed";
 }
 
-export function ValidateStatusPanel({ operation }: ValidateStatusPanelProps) {
+export function ValidateStatusPanel({ operation, variant = "toast" }: ValidateStatusPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [dismissedOperationId, setDismissedOperationId] = useState<string | undefined>();
 
   useEffect(() => {
-    if (!operation) {
+    if (!operation || variant !== "toast") {
       return;
     }
 
     if (operation.status === "running") {
-      setDismissedOperationId(undefined);
-      setExpanded(false);
+      if (dismissedOperationId !== undefined) {
+        setDismissedOperationId(undefined);
+      }
+      if (expanded) {
+        setExpanded(false);
+      }
       return;
     }
 
@@ -48,7 +53,7 @@ export function ValidateStatusPanel({ operation }: ValidateStatusPanelProps) {
         window.removeEventListener("pointerdown", dismissOnPointer);
       };
     }
-  }, [operation]);
+  }, [operation?.status, operation?.operationId, operation?.startedAt, variant, dismissedOperationId, expanded]);
 
   const operationKey = operation ? operation.operationId || operation.startedAt : undefined;
   const visible = Boolean(operation && operationKey !== dismissedOperationId);
@@ -59,9 +64,15 @@ export function ValidateStatusPanel({ operation }: ValidateStatusPanelProps) {
   }
 
   const failure = operation.status === "failed";
+  const containerClass =
+    variant === "panel"
+      ? "detail-stack"
+      : `floating-panel floating-panel--validate floating-panel--${
+          failure ? "error" : operation.status === "success" ? "success" : "warning"
+        }`;
 
   return (
-    <div className={`floating-panel floating-panel--validate floating-panel--${failure ? "error" : operation.status === "success" ? "success" : "warning"}`}>
+    <div className={containerClass}>
       <div className="validate-toast__header">
         {operation.status === "running" ? <LoaderCircle size={14} className="busy spin" /> : null}
         {operation.status === "success" ? <CheckCircle2 size={14} /> : null}
@@ -69,7 +80,7 @@ export function ValidateStatusPanel({ operation }: ValidateStatusPanelProps) {
         <span>{summary}</span>
       </div>
 
-      {failure ? (
+      {failure || variant === "panel" ? (
         <div className="validate-toast__details">
           <button className="validate-toast__toggle" onClick={() => setExpanded((value) => !value)}>
             <span>Details</span>
@@ -77,7 +88,9 @@ export function ValidateStatusPanel({ operation }: ValidateStatusPanelProps) {
           </button>
           {expanded ? (
             <div className="validate-toast__log">
-              {(operation.lines.length > 0 ? operation.lines : [operation.errorMessage ?? "Validation failed"]).map((line, index) => (
+              {(operation.lines.length > 0
+                ? operation.lines
+                : [operation.errorMessage ?? (operation.status === "success" ? "Validation completed" : "Validation failed")]).map((line, index) => (
                 <div key={`${operationKey}:${index}`} className="log-line">
                   {line}
                 </div>

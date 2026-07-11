@@ -55,12 +55,12 @@
   --border-subtle: #243038;
   --border-strong: #37454F;
   --text-primary: #E9EEF2;
-  --text-secondary: #8FA0AC;
-  --text-tertiary: #5C6C77;
+  --text-secondary: #B5C2CB;
+  --text-tertiary: #93A1AB;
   --accent-copper: #E2984B;
   --accent-copper-muted: #8A6234;
   --status-running: #46B893;
-  --status-stopped: #5C6C77;
+  --status-stopped: #8B99A3;
   --status-warning: #E0B23D;
   --status-error: #E5484D;
   --status-info: #4FA0DB;
@@ -831,29 +831,10 @@ button {
   color: var(--status-error);
 }
 
-.detail-panel--empty {
-  min-height: 240px;
-  display: grid;
-  align-content: center;
-  justify-items: start;
-  text-align: left;
-  gap: var(--space-2);
-}
-
 .detail-panel--overlay {
   width: 320px;
   max-height: min(70vh, 720px);
   overflow: auto;
-}
-
-.detail-panel__empty-icon {
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
 }
 
 .detail-list__row--column {
@@ -930,8 +911,8 @@ button {
 }
 
 .workspace-panel--project {
-  min-width: 280px;
-  max-width: min(360px, calc(100vw - 32px));
+  min-width: 228px;
+  max-width: min(300px, calc(100vw - 32px));
 }
 
 .workspace-panel--toolbar {
@@ -950,18 +931,22 @@ button {
 }
 
 .workspace-project-card {
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .workspace-project-card__header {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .workspace-project-card__title-block {
   gap: var(--space-1);
   min-width: 0;
+}
+
+.workspace-project-card__meta {
+  padding-left: calc(32px + var(--space-2));
 }
 
 .workspace-toolbar__cluster {
@@ -982,6 +967,12 @@ button {
   padding: var(--space-3);
 }
 
+.operation-progress,
+.operation-progress__steps,
+.operation-progress__step {
+  min-width: 0;
+}
+
 .floating-panel--validate {
   min-width: 280px;
   max-width: min(560px, calc(100vw - 32px));
@@ -990,6 +981,8 @@ button {
 .floating-panel--operation {
   min-width: 360px;
   max-width: min(640px, calc(100vw - 32px));
+  max-height: min(70vh, calc(100vh - 32px));
+  overflow: hidden;
 }
 
 .floating-panel--success {
@@ -1016,6 +1009,7 @@ button {
 .validate-toast__header {
   font-size: var(--text-body);
   line-height: 20px;
+  color: var(--text-primary);
 }
 
 .validate-toast__details {
@@ -1040,7 +1034,7 @@ button {
 
 .validate-toast__log {
   margin-top: var(--space-2);
-  max-height: 180px;
+  max-height: 280px;
   overflow: auto;
   padding: var(--space-2);
   border: 1px solid var(--border-subtle);
@@ -1052,11 +1046,39 @@ button {
   display: grid;
   gap: var(--space-2);
   margin-top: var(--space-3);
+  min-width: 0;
+}
+
+.operation-progress--inline {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.floating-panel--operation .operation-progress__steps,
+.operation-progress--inline .operation-progress__steps {
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.floating-panel--operation .operation-progress__steps {
+  max-height: min(52vh, calc(100vh - 144px));
+}
+
+.detail-panel--overlay .operation-progress--inline .operation-progress__steps {
+  max-height: min(44vh, calc(100vh - 220px));
 }
 
 .operation-progress__step {
   display: grid;
   gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  overflow: hidden;
 }
 
 .operation-progress__icon {
@@ -1067,17 +1089,78 @@ button {
 
 .operation-progress__label {
   min-width: 0;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-progress__track {
+  width: 100%;
+  min-width: 0;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--bg-canvas) 75%, var(--bg-elevated));
 }
 
 .operation-progress__bar {
-  height: 4px;
-  border-radius: var(--radius-full);
-  background: linear-gradient(90deg, var(--accent-copper), color-mix(in srgb, var(--accent-copper) 30%, transparent));
+  height: 100%;
+  max-width: 100%;
+  border-radius: inherit;
+  transition: width 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.operation-progress__bar--active {
+  background: var(--accent-copper);
   animation: validation-progress 1.2s ease-in-out infinite alternate;
 }
 
+.operation-progress__bar--done {
+  background: var(--status-running);
+}
+
+.operation-progress__bar--failed {
+  background: var(--status-error);
+}
+
+.operation-progress__bar--pending {
+  background: transparent;
+}
+
 .operation-progress__failure {
+  min-width: 0;
   padding-left: calc(16px + var(--space-2));
+}
+
+.operation-progress__failure .validate-toast__log {
+  max-width: 100%;
+}
+
+[data-theme="dark"] .floating-panel--operation,
+[data-theme="dark"] .floating-panel--validate,
+[data-theme="dark"] .detail-panel--overlay .diagnostic p,
+[data-theme="dark"] .detail-panel--overlay .metadata-note,
+[data-theme="dark"] .detail-panel--overlay .toolbar-note,
+[data-theme="dark"] .detail-panel--overlay .mono-key,
+[data-theme="dark"] .detail-panel--overlay .mono-path,
+[data-theme="dark"] .detail-panel--overlay .detail-tab,
+[data-theme="dark"] .detail-list__row--loading .mono-value,
+[data-theme="dark"] .operation-progress__label,
+[data-theme="dark"] .validate-toast__toggle {
+  color: #D7E0E6;
+}
+
+[data-theme="dark"] .detail-panel--overlay .metadata-note,
+[data-theme="dark"] .detail-panel--overlay .toolbar-note,
+[data-theme="dark"] .detail-panel--overlay .mono-key,
+[data-theme="dark"] .detail-panel--overlay .mono-path,
+[data-theme="dark"] .detail-tab {
+  color: #C3CFD7;
+}
+
+[data-theme="dark"] .detail-list__row--loading {
+  color: #D7E0E6;
 }
 
 .split-button {
@@ -1283,13 +1366,13 @@ button {
      never grow past what ELK was told about in graph-builder.ts
      (SERVICE_NODE_WIDTH/SERVICE_NODE_HEIGHT) - every row below is either a
      single truncated line or explicitly capped, so 156px is always enough. */
-  width: 216px;
-  height: 156px;
+  width: 208px;
+  height: 140px;
   overflow: hidden;
   display: grid;
   grid-template-rows: auto auto 1fr auto;
-  gap: var(--space-2);
-  padding: var(--space-3);
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
@@ -1365,9 +1448,9 @@ button {
   width: 100%;
   height: 100%;
   padding: var(--space-3);
-  border: 1px dashed var(--border-strong);
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 80%, transparent);
   border-radius: var(--radius-lg);
-  background: transparent;
+  background: color-mix(in srgb, var(--bg-elevated) 18%, transparent);
   overflow: hidden;
 }
 
@@ -1384,7 +1467,7 @@ button {
 .external-node {
   /* Fixed size + overflow:hidden mirrors .manifest-node above; must stay in
      sync with COMPACT_NODE_WIDTH/COMPACT_NODE_HEIGHT in graph-builder.ts. */
-  width: 160px;
+  width: 152px;
   height: 72px;
   overflow: hidden;
   display: grid;
@@ -1539,8 +1622,12 @@ button {
   font-weight: 600;
 }
 
-.react-flow__controls-button,
-.react-flow__minimap {
+.react-flow__edge path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-flow__controls-button {
   background: var(--bg-elevated);
   color: var(--text-secondary);
   border-color: var(--border-subtle);
@@ -1552,10 +1639,6 @@ button {
 
 .react-flow__attribution {
   display: none;
-}
-
-.graph-minimap {
-  background: var(--bg-elevated);
 }
 
 .metadata-row {

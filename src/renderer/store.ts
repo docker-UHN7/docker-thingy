@@ -32,7 +32,7 @@ const MAX_OPERATION_LINES = 2000;
 /**
  * Selection has exactly one owner: the renderer. `selectedProjectId` lives
  * outside the snapshot precisely so that replacing the snapshot wholesale
- * (periodic refresh, settings update, clearing recents) can never clobber
+ * (live snapshot updates, settings update, clearing recents) can never clobber
  * what the user clicked. This helper is the one rule for carrying the
  * selection across a snapshot replacement:
  *
@@ -72,7 +72,7 @@ type AppState = {
   operations: Record<string, OperationState>;
   selectedProjectId: string | undefined;
   bootstrap(): Promise<void>;
-  refreshRuntime(): Promise<void>;
+  applySnapshot(snapshot: AppSnapshot, seedHint?: string | undefined): void;
   openSource(): Promise<boolean>;
   openSourcePath(sourcePath: string): Promise<boolean>;
   openRecentSource(sourcePath: string): Promise<boolean>;
@@ -97,103 +97,33 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: undefined,
   recentLoadingPath: undefined,
   selectedProjectId: undefined,
+  applySnapshot(snapshot, seedHint) {
+    const effectiveSnapshot = {
+      ...snapshot,
+      settings: {
+        ...snapshot.settings,
+        themeMode: get().themeModePreference ?? snapshot.settings.themeMode
+      }
+    };
+
+    set({
+      snapshot: effectiveSnapshot,
+      loading: false,
+      error: undefined,
+      theme: deriveTheme(effectiveSnapshot.settings.themeMode),
+      selectedProjectId: reconcileSelectedProjectId(get().selectedProjectId, effectiveSnapshot.projects, seedHint)
+    });
+  },
   async bootstrap() {
     set({ loading: true, error: undefined });
 
     try {
       const snapshot = await window.dockerExplorer.getSnapshot();
-      const effectiveSnapshot = {
-        ...snapshot,
-        settings: {
-          ...snapshot.settings,
-          themeMode: get().themeModePreference ?? snapshot.settings.themeMode
-        }
-      };
-
-      // Helper to validate that the id actually exists in this snapshot.
-      const isValidId = (id: string | undefined) =>
-        id && snapshot.projects.some((project) => project.id === id);
-
-      let initialSelection = get().selectedProjectId;
-
-      if (!isValidId(initialSelection)) {
-        initialSelection = isValidId(snapshot.activeProjectId) ? snapshot.activeProjectId : undefined;
-      }
-
-      set({
-        snapshot: effectiveSnapshot,
-        loading: false,
-        theme: deriveTheme(effectiveSnapshot.settings.themeMode),
-        selectedProjectId: initialSelection
-      });
-
-      const runtimeResult = await window.dockerExplorer.refreshRuntime();
-      if (!runtimeResult.ok) {
-        // Runtime discovery failed, but we still have the (empty) snapshot to show -
-        // surface the error instead of silently pretending everything is fine.
-        set({
-          snapshot: effectiveSnapshot,
-          loading: false,
-          error: runtimeResult.error.message,
-          theme: deriveTheme(effectiveSnapshot.settings.themeMode)
-        });
-        return;
-      }
-
-      const runtimeSnapshot = {
-        ...runtimeResult.data,
-        settings: {
-          ...runtimeResult.data.settings,
-          themeMode: get().themeModePreference ?? runtimeResult.data.settings.themeMode
-        }
-      };
-
-      set({
-        snapshot: runtimeSnapshot,
-        loading: false,
-        theme: deriveTheme(runtimeSnapshot.settings.themeMode),
-        selectedProjectId: reconcileSelectedProjectId(
-          get().selectedProjectId,
-          runtimeSnapshot.projects,
-          runtimeSnapshot.activeProjectId
-        )
-      });
+      get().applySnapshot(snapshot, snapshot.activeProjectId);
     } catch (error) {
       set({
         loading: false,
         error: error instanceof Error ? error.message : "Failed to load Docker Explorer."
-      });
-    }
-  },
-  async refreshRuntime() {
-    set({ loading: true, error: undefined });
-    try {
-      const result = await window.dockerExplorer.refreshRuntime();
-      if (!result.ok) {
-        set({ loading: false, error: result.error.message });
-        return;
-      }
-
-      const runtimeSnapshot = {
-        ...result.data,
-        settings: {
-          ...result.data.settings,
-          themeMode: get().themeModePreference ?? result.data.settings.themeMode
-        }
-      };
-
-      set({
-        snapshot: runtimeSnapshot,
-        loading: false,
-        theme: deriveTheme(runtimeSnapshot.settings.themeMode),
-        // No seed hint here: after boot, main's activeProjectId is stale.
-        // Keep whatever the user selected as long as it still exists.
-        selectedProjectId: reconcileSelectedProjectId(get().selectedProjectId, runtimeSnapshot.projects)
-      });
-    } catch (error) {
-      set({
-        loading: false,
-        error: error instanceof Error ? error.message : "Runtime refresh failed."
       });
     }
   },
@@ -231,7 +161,6 @@ export const useAppStore = create<AppState>((set, get) => ({
               activeProjectId: result.data.id,
               settings: {
                 themeMode: "dark",
-                runtimeRefreshSeconds: 3,
                 statsPollSeconds: 3,
                 logTailLines: 200
               }
@@ -283,7 +212,6 @@ export const useAppStore = create<AppState>((set, get) => ({
               activeProjectId: result.data.id,
               settings: {
                 themeMode: "dark",
-                runtimeRefreshSeconds: 3,
                 statsPollSeconds: 3,
                 logTailLines: 200
               }
@@ -333,7 +261,6 @@ export const useAppStore = create<AppState>((set, get) => ({
               activeProjectId: result.data.id,
               settings: {
                 themeMode: "dark",
-                runtimeRefreshSeconds: 3,
                 statsPollSeconds: 3,
                 logTailLines: 200
               }
@@ -586,7 +513,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 // (e.g. a build keeps running in the background), and the store - not any
 // single mounted component - is the right long-lived place to keep listening.
 if (typeof window !== "undefined" && window.dockerExplorer) {
-  window.dockerExplorer.subscribeBuildEvents((event) => {
-    useAppStore.getState().handleOperationEvent(event);
-  });
+  if (typeof window.dockerExplorer.subscribeBuildEvents === "function") {
+    window.dockerExplorer.subscribeBuildEvents((event) => {
+      useAppStore.getState().handleOperationEvent(event);
+    });
+  }
+
+  if (typeof window.dockerExplorer.subscribeSnapshotEvents === "function") {
+    window.dockerExplorer.subscribeSnapshotEvents((snapshot) => {
+      useAppStore.getState().applySnapshot(snapshot);
+    });
+  }
 }

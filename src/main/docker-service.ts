@@ -723,8 +723,8 @@ function mergeRuntimeProjectWithSource(
  * The counterpart to `mergeRuntimeProjectWithSource`, used when a project was
  * already opened explicitly from source (and already has a stable
  * `source-compose:...` id, editable actions, etc.) and a *separate*
- * runtime-discovered card for the exact same Compose file shows up on
- * refresh. Keeps the source project's identity (id/access/actions/title) -
+ * runtime-discovered card for the exact same Compose file shows up during a
+ * live sync. Keeps the source project's identity (id/access/actions/title) -
  * which is what `activeProjectId` points at - while pulling in live
  * container status per service, so the two never render as duplicate cards
  * and the active selection never has to jump to a different project just
@@ -756,7 +756,7 @@ export function mergeSourceProjectWithRuntime(
     buildStatus: "built",
     externalNodes: buildExternalNodes(mergedServices),
     relationshipEdges: buildRelationshipEdges(mergedServices),
-    lastUpdatedLabel: "Just refreshed",
+    lastUpdatedLabel: "Live runtime",
     lastCheckedAt: new Date().toISOString(),
     sourceLinked: true
   };
@@ -933,9 +933,9 @@ function standaloneContainerProject(
         message: "This container was discovered directly from the active daemon and is not linked to an editable source project."
       }
     ],
-    actions: [{ id: "refresh", label: "Refresh" }],
+    actions: [],
     buildStatus: "built",
-    lastUpdatedLabel: "Just refreshed",
+    lastUpdatedLabel: "Live runtime",
     lastCheckedAt: new Date().toISOString(),
     externalNodes: [],
     relationshipEdges: buildRelationshipEdges([service]),
@@ -999,7 +999,7 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
         // directory's basename) isn't a reliably unique key - two unrelated
         // directories can easily share a name. Fold in the resolved config
         // file path too so those don't collide into a single id and cause
-        // the active project to silently flip to the wrong card on refresh.
+        // the active project to silently flip to the wrong card during a sync.
         const configIdentity = resolvedConfigFiles[0] ? resolveConfigKey(resolvedConfigFiles[0]) : "no-config-file";
 
         const runtimeProject = {
@@ -1032,7 +1032,7 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
               ]
             : [],
           buildStatus: "built" as const,
-          lastUpdatedLabel: "Just refreshed",
+          lastUpdatedLabel: "Live runtime",
           lastCheckedAt: new Date().toISOString(),
           externalNodes: buildExternalNodes(services),
           relationshipEdges: buildRelationshipEdges(services),
