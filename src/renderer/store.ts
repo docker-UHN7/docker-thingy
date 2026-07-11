@@ -109,10 +109,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           themeMode: get().themeModePreference ?? snapshot.settings.themeMode
         }
       };
-    
-      // Hjelpefunksjon for å validere at ID-en faktisk finnes
-      const isValidId = (id: string | undefined) => 
-        id && snapshot.projects.some(p => p.id === id);
+
+      // Helper to validate that the id actually exists in this snapshot.
+      const isValidId = (id: string | undefined) =>
+        id && snapshot.projects.some((project) => project.id === id);
 
       let initialSelection = get().selectedProjectId;
 
@@ -437,8 +437,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeProject() {
     const { snapshot, selectedProjectId } = get();
     if (!snapshot) return undefined;
-    
-    // Prioriter den lokale seleksjonen
+
+    // Local selection always takes priority.
     return snapshot.projects.find((project) => project.id === selectedProjectId);
   },
   async runProjectAction(projectId, actionId) {
