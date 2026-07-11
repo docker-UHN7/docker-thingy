@@ -80,6 +80,7 @@ type AppState = {
   bootstrap(): Promise<void>;
   applySnapshot(snapshot: AppSnapshot, seedHint?: string | undefined): void;
   openSource(): Promise<boolean>;
+  createProject(): Promise<boolean>;
   openSourcePath(sourcePath: string): Promise<boolean>;
   openRecentSource(sourcePath: string): Promise<boolean>;
   selectProject(projectId: string): void;
@@ -191,6 +192,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         loading: false,
         error: error instanceof Error ? error.message : "Opening source failed."
+      });
+      return false;
+    }
+  },
+  async createProject() {
+    set({ loading: true, error: undefined });
+    try {
+      const result = await window.dockerExplorer.createProject();
+      const current = get().snapshot;
+
+      if (!result.ok) {
+        set({ loading: false, error: result.error.message });
+        return false;
+      }
+
+      set({
+        snapshot: current
+          ? {
+              ...current,
+              projects: [result.data, ...current.projects.filter((project) => project.id !== result.data.id)],
+              recents: result.data.sourcePath
+                ? [result.data.sourcePath, ...current.recents.filter((entry) => entry !== result.data.sourcePath)].slice(0, 12)
+                : current.recents,
+              activeProjectId: result.data.id
+            }
+          : {
+              dockerStatus: {
+                cliAvailable: false,
+                daemonAvailable: false,
+                composeAvailable: false,
+                buildxAvailable: false,
+                message: "Docker status unavailable."
+              },
+              projects: [result.data],
+              recents: result.data.sourcePath ? [result.data.sourcePath] : [],
+              activeProjectId: result.data.id,
+              settings: {
+                themeMode: "dark",
+                statsPollSeconds: 3,
+                logTailLines: 200
+              }
+            },
+        selectedProjectId: result.data.id,
+        loading: false
+      });
+
+      return true;
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Creating project failed."
       });
       return false;
     }

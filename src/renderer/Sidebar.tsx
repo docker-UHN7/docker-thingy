@@ -2,6 +2,7 @@ import {
   ArrowRight,
   Boxes,
   FileCode2,
+  FilePlus2,
   FolderPlus,
   LoaderCircle,
   MoonStar,
@@ -28,6 +29,7 @@ type SidebarProps = {
   theme: "dark" | "light";
   onSelect(projectId: string): void;
   onOpenSource(): void;
+  onCreateProject(): void;
   onOpenSourcePath(sourcePath: string): void;
   onOpenRecent(sourcePath: string): void;
   onToggleTheme(): void;
@@ -72,6 +74,7 @@ export function Sidebar({
   theme,
   onSelect,
   onOpenSource,
+  onCreateProject,
   onOpenSourcePath,
   onOpenRecent,
   onToggleTheme,
@@ -184,6 +187,10 @@ export function Sidebar({
             ) : null}
           </label>
 
+          <button className="button button--secondary" onClick={onCreateProject}>
+            <FilePlus2 size={16} />
+            <span>Create project</span>
+          </button>
           <button className="button button--primary" onClick={onOpenSource}>
             <FolderPlus size={16} />
             <span>Add project</span>
@@ -210,14 +217,20 @@ export function Sidebar({
               <div>
                 <p className="body-copy">Drop a docker-compose.yml, compose.yaml, or Dockerfile here</p>
                 <p className="metadata-note">
-                  Or click "Add Project" to browse for one. Running containers appear automatically once Docker is
-                  detected.
+                  Or click "Add Project" to browse for one, or "Create Project" to start a fresh one. Running
+                  containers appear automatically once Docker is detected.
                 </p>
               </div>
-              <button className="button button--primary" onClick={onOpenSource}>
-                <FolderPlus size={16} />
-                <span>Add Project</span>
-              </button>
+              <div className="empty-dropzone__actions">
+                <button className="button button--secondary" onClick={onCreateProject}>
+                  <FilePlus2 size={16} />
+                  <span>Create Project</span>
+                </button>
+                <button className="button button--primary" onClick={onOpenSource}>
+                  <FolderPlus size={16} />
+                  <span>Add Project</span>
+                </button>
+              </div>
             </div>
           ) : filteredProjects.length === 0 ? (
             <div className="empty-dropzone">

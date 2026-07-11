@@ -66,6 +66,14 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
     return projectService.openSource();
   });
 
+  ipcMain.handle(IPC_CHANNELS.CREATE_PROJECT, async (event): Promise<OpenSourceResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.createProject();
+  });
+
   ipcMain.handle(IPC_CHANNELS.OPEN_SOURCE_PATH, async (event, sourcePath: string): Promise<OpenSourceResult> => {
     if (!isTrustedSender(mainWindow, event)) {
       throw new Error("Untrusted sender");

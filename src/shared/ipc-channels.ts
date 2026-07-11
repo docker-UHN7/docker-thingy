@@ -1,6 +1,7 @@
 export const IPC_CHANNELS = {
   GET_SNAPSHOT: "app:get-snapshot",
   OPEN_SOURCE: "app:open-source",
+  CREATE_PROJECT: "app:create-project",
   OPEN_SOURCE_PATH: "app:open-source-path",
   OPEN_RECENT_SOURCE: "app:open-recent-source",
   OPEN_EXTERNAL_URL: "app:open-external-url",

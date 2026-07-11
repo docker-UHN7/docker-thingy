@@ -2,7 +2,7 @@ import { dialog } from "electron";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
-import { access, readFile, readdir, stat } from "node:fs/promises";
+import { access, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, dirname, basename, extname } from "node:path";
 import { parseDocument } from "yaml";
 import type {
@@ -238,6 +238,11 @@ export function applyProjectGrouping(directoryPath: string, projects: ProjectSum
     groupLabel
   }));
 }
+
+const NEW_PROJECT_COMPOSE_TEMPLATE = `# New Compose project - use "Add service" in the app to add your first
+# service from a preset or Docker Hub, or edit this file directly.
+services: {}
+`;
 
 const DEFAULT_SETTINGS: AppSettings = {
   themeMode: "dark",
@@ -699,6 +704,68 @@ export class ProjectService {
       }
 
       return this.commitOpenedProjects(mainProject.sourcePath || mainProject.configFiles[0] || dockerfilePath, mainProject, groupedProjects);
+    });
+  }
+
+  /**
+   * "Create project": picks a folder and either scaffolds a fresh, empty
+   * docker-compose.yml there (the common case - build the project up from
+   * scratch via "Add service" or the editor), or, if that folder already
+   * has a Compose project or Dockerfile, asks whether to open the existing
+   * one instead of silently creating a second, conflicting compose file.
+   */
+  async createProject(): Promise<OpenSourceResult> {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory", "createDirectory"]
+    });
+
+    const directoryPath = result.filePaths[0];
+    if (!directoryPath) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "No folder was selected." }
+      };
+    }
+
+    const groups = await scanDirectoryForComposeProjects(directoryPath);
+    const dockerfilePath = join(directoryPath, "Dockerfile");
+    let hasDockerfile = false;
+    try {
+      await access(dockerfilePath);
+      hasDockerfile = true;
+    } catch {}
+
+    if (groups.length > 0 || hasDockerfile) {
+      const choice = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["Open existing project", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "This folder already has a Compose project",
+        detail: "Open the existing project instead of creating a new one? Choose an empty folder to create a fresh project."
+      });
+
+      if (choice.response !== 0) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "That folder already contains a project. Pick an empty folder to create a new one, or open the existing project."
+          }
+        };
+      }
+
+      const mainFile = groups[0]?.mainFile ?? dockerfilePath;
+      return this.openSourcePath(mainFile);
+    }
+
+    return this.withLock(async () => {
+      const newComposePath = join(directoryPath, "docker-compose.yml");
+      await writeFile(newComposePath, NEW_PROJECT_COMPOSE_TEMPLATE, "utf8");
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const project = await loadComposeProject(newComposePath, contextName, [newComposePath]);
+      return this.commitOpenedProjects(newComposePath, project, [project]);
     });
   }
 

@@ -11,6 +11,7 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
   copyToClipboard: (text) => ipcRenderer.invoke(IPC_CHANNELS.COPY_TO_CLIPBOARD, text),
   getSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SNAPSHOT),
   openSource: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE),
+  createProject: () => ipcRenderer.invoke(IPC_CHANNELS.CREATE_PROJECT),
   openSourcePath: (sourcePath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE_PATH, sourcePath),
   openRecentSource: (sourcePath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_RECENT_SOURCE, sourcePath),
   openExternalUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_EXTERNAL_URL, url),

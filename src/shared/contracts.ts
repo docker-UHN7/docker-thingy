@@ -424,6 +424,7 @@ export type PreloadApi = {
   copyToClipboard(text: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   openSource(): Promise<OpenSourceResult>;
+  createProject(): Promise<OpenSourceResult>;
   openSourcePath(sourcePath: string): Promise<OpenSourceResult>;
   openRecentSource(sourcePath: string): Promise<OpenSourceResult>;
   openExternalUrl(url: string): Promise<void>;
