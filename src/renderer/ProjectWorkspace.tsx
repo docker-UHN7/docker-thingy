@@ -27,6 +27,7 @@ import type {
   StatsSnapshotResult
 } from "../shared/contracts";
 import { ConfigurationPanel } from "./ConfigurationPanel";
+import { distinguishingFileLabel, longestCommonPrefix } from "./compose-file-labels";
 import { Inspector } from "./Inspector";
 import { LogsPanel } from "./LogsPanel";
 import { OperationProgressPanel } from "./OperationProgressPanel";
@@ -376,6 +377,11 @@ export function ProjectWorkspace({
     validationOperation && validationOperationKey !== dismissedValidationOperationId ? validationOperation : undefined;
   const activeConfigFiles = optimisticConfigFiles ?? project.configFiles;
   const inactiveConfigFiles = (project.allConfigFiles ?? []).filter((file) => !activeConfigFiles.includes(file));
+  // Computed across every detected file (not just the active subset) so a
+  // label doesn't shift around as files get toggled on/off.
+  const commonFileNamePrefix = longestCommonPrefix(
+    (project.allConfigFiles ?? []).map((file) => file.split(/[/\\]/).pop() ?? file)
+  );
 
   return (
     <main className="workspace-screen">
@@ -474,10 +480,13 @@ export function ProjectWorkspace({
                         <ol className="compose-file-order">
                           {activeConfigFiles.map((file, index) => {
                             const fileName = file.split(/[/\\]/).pop() ?? file;
+                            const displayName = distinguishingFileLabel(fileName, commonFileNamePrefix);
                             return (
                               <li key={file} className="compose-file-order__item" title={file}>
                                 <span className="compose-file-order__index">{index + 1}</span>
-                                <span className="compose-file-order__name">{fileName}</span>
+                                <span className="compose-file-order__name" title={fileName}>
+                                  {displayName}
+                                </span>
                                 <div className="compose-file-order__actions">
                                   <button
                                     type="button"
@@ -517,6 +526,7 @@ export function ProjectWorkspace({
                             <span className="metadata-note">Add:</span>
                             {inactiveConfigFiles.map((file) => {
                               const fileName = file.split(/[/\\]/).pop() ?? file;
+                              const displayName = distinguishingFileLabel(fileName, commonFileNamePrefix);
                               return (
                                 <button
                                   type="button"
@@ -526,7 +536,7 @@ export function ProjectWorkspace({
                                   onClick={() => handleConfigFileToggle(file, true)}
                                 >
                                   <Plus size={12} />
-                                  {fileName}
+                                  <span>{displayName}</span>
                                 </button>
                               );
                             })}
