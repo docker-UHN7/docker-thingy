@@ -2,6 +2,8 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import { MarkerType, type Edge, type Node } from "@xyflow/react";
 import type { MountRecord, ProjectSummary, ServiceNodeModel } from "../../shared/contracts";
 
+const elk = new ELK();
+
 type GraphNodeData =
   | ServiceNodeModel
   | { label: string }
@@ -223,7 +225,6 @@ export async function layoutGraph(
   project: ProjectSummary,
   direction: "RIGHT" | "DOWN" = "RIGHT"
 ): Promise<{ nodes: Node<GraphNodeData>[]; edges: Edge<GraphEdgeData>[] }> {
-  const elk = new ELK();
   const { nodes, edges } = buildGraph(project);
 
   const layout = await elk.layout({
