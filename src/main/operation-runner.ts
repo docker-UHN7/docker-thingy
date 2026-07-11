@@ -84,9 +84,14 @@ async function runStreamed(
   }
 }
 
+// Every active compose file becomes its own -f flag (in order), not just the
+// project's primary/anchor file - this is what lets a checked-on override
+// file actually take effect when a project has more than one active config.
 function composeArgs(project: ProjectSummary, configPath: string, command: string, extraArgs: readonly string[] = []): string[] {
   const projectNameArgs = project.composeProjectName ? ["--project-name", project.composeProjectName] : [];
-  return ["compose", ...projectNameArgs, "-f", configPath, command, ...extraArgs];
+  const configFiles = project.configFiles.length > 0 ? project.configFiles : [configPath];
+  const fileArgs = configFiles.flatMap((file) => ["-f", file]);
+  return ["compose", ...projectNameArgs, ...fileArgs, command, ...extraArgs];
 }
 
 type RuntimeContainerRecord = {

@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+#
+# Privileged network-control helper for Docker Project Explorer's Network
+# Topology feature. This is the *only* code in this feature that runs as
+# root - invoked via `pkexec` from the Electron main process, authorized by
+# dev.dockerthingy.netctl.policy.
+#
+# Every argument is re-validated here even though the TypeScript caller
+# already validates - this script is directly reachable by anything that can
+# invoke pkexec with this path, so it must not trust its caller.
+#
+# Verbs:
+#   container-link <pid> up|down     - toggle a container's host-side veth
+#   bridge-forward <bridge> allow|deny - allow/block a bridge's forwarding
+#                                        to any other interface
+
+set -euo pipefail
+
+PID_PATTERN='^[0-9]+$'
+STATE_PATTERN='^(up|down)$'
+FORWARD_STATE_PATTERN='^(allow|deny)$'
+# Linux interface names are capped at IFNAMSIZ-1 = 15 chars.
+IFACE_PATTERN='^[a-zA-Z0-9_.-]{1,15}$'
+
+NFT_TABLE="inet docker-thingy"
+NFT_CHAIN="forward"
+
+fail() {
+  echo "netctl: $1" >&2
+  exit 1
+}
+
+cmd_container_link() {
+  local pid="$1"
+  local state="$2"
+
+  [[ "$pid" =~ $PID_PATTERN ]] || fail "invalid pid: $pid"
+  [[ "$state" =~ $STATE_PATTERN ]] || fail "invalid state: $state"
+  [ -d "/proc/$pid/ns" ] || fail "no such process: $pid"
+
+  # Resolve the container-side eth0's peer ifindex, then find which host
+  # interface owns that ifindex - that's the veth end we can toggle.
+  local iface_line peer_ifindex veth_name
+  iface_line=$(nsenter --net="/proc/$pid/ns/net" -- ip -o link show eth0 2>/dev/null) \
+    || fail "could not inspect network namespace for pid $pid"
+
+  peer_ifindex=$(sed -n 's/.*@if\([0-9]\+\).*/\1/p' <<<"$iface_line")
+  [ -n "$peer_ifindex" ] || fail "could not resolve veth peer ifindex for pid $pid"
+
+  veth_name=$(ip -o link show | awk -F': ' -v idx="$peer_ifindex" '$1==idx {split($2,parts,"@"); print parts[1]}')
+  [ -n "$veth_name" ] || fail "could not resolve host veth for ifindex $peer_ifindex"
+  [[ "$veth_name" =~ $IFACE_PATTERN ]] || fail "resolved veth name looks invalid: $veth_name"
+
+  ip link set dev "$veth_name" "$state"
+}
+
+ensure_nft_table() {
+  nft list table $NFT_TABLE >/dev/null 2>&1 || nft add table $NFT_TABLE
+  nft list chain $NFT_TABLE $NFT_CHAIN >/dev/null 2>&1 \
+    || nft add chain $NFT_TABLE $NFT_CHAIN '{ type filter hook forward priority -1 ; }'
+}
+
+remove_existing_bridge_rule() {
+  local bridge="$1"
+  local handle
+  handle=$(nft -a list chain $NFT_TABLE $NFT_CHAIN 2>/dev/null \
+    | awk -v tag="docker-thingy:$bridge" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i=="handle") print $(i+1) }')
+
+  for h in $handle; do
+    nft delete rule $NFT_TABLE $NFT_CHAIN handle "$h"
+  done
+}
+
+cmd_bridge_forward() {
+  local bridge="$1"
+  local state="$2"
+
+  [[ "$bridge" =~ $IFACE_PATTERN ]] || fail "invalid bridge name: $bridge"
+  [[ "$state" =~ $FORWARD_STATE_PATTERN ]] || fail "invalid state: $state"
+
+  ensure_nft_table
+  remove_existing_bridge_rule "$bridge"
+
+  if [ "$state" = "deny" ]; then
+    # nft's own grammar (not bash's) requires the comment value to be a
+    # quoted string literal - bash's quotes around "docker-thingy:$bridge"
+    # get stripped before nft ever sees the argv token, so without the
+    # escaped \" here nft receives an unquoted `docker-thingy:$bridge` and
+    # chokes on the bare colon.
+    nft add rule $NFT_TABLE $NFT_CHAIN iifname "$bridge" oifname != "$bridge" drop comment \"docker-thingy:$bridge\"
+  fi
+  # "allow" just leaves the rule removed - normal Docker/libvirt forwarding applies.
+}
+
+main() {
+  local verb="${1:-}"
+  case "$verb" in
+    container-link)
+      [ "$#" -eq 3 ] || fail "usage: container-link <pid> up|down"
+      cmd_container_link "$2" "$3"
+      ;;
+    bridge-forward)
+      [ "$#" -eq 3 ] || fail "usage: bridge-forward <bridge> allow|deny"
+      cmd_bridge_forward "$2" "$3"
+      ;;
+    *)
+      fail "unknown verb: $verb (expected container-link or bridge-forward)"
+      ;;
+  esac
+}
+
+main "$@"

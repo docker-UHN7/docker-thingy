@@ -12,6 +12,36 @@ export function isValidContainerRef(value: unknown): value is string {
   return typeof value === "string" && CONTAINER_REF_PATTERN.test(value);
 }
 
+// A process pid is always a positive integer - reject anything else before
+// it reaches nsenter/kill-adjacent tooling.
+const PID_PATTERN = /^[1-9][0-9]*$/;
+
+export function isValidPid(value: unknown): value is string {
+  return typeof value === "string" && PID_PATTERN.test(value);
+}
+
+// Linux interface names (bridges, veths) are capped at IFNAMSIZ-1 = 15 chars
+// and can't contain shell/nft-meaningful characters.
+const INTERFACE_NAME_PATTERN = /^[a-zA-Z0-9_.-]{1,15}$/;
+
+export function isValidInterfaceName(value: unknown): value is string {
+  return typeof value === "string" && INTERFACE_NAME_PATTERN.test(value);
+}
+
+// libvirt domain names are user-chosen but virsh itself restricts them to a
+// conservative, shell-safe character set (no whitespace/slashes/quotes).
+const LIBVIRT_DOMAIN_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
+
+export function isValidLibvirtDomainName(value: unknown): value is string {
+  return typeof value === "string" && LIBVIRT_DOMAIN_NAME_PATTERN.test(value);
+}
+
+const MAC_ADDRESS_PATTERN = /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/;
+
+export function isValidMacAddress(value: unknown): value is string {
+  return typeof value === "string" && MAC_ADDRESS_PATTERN.test(value);
+}
+
 const MIN_LOG_TAIL = 1;
 const MAX_LOG_TAIL = 10_000;
 const DEFAULT_LOG_TAIL = 200;

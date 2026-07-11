@@ -1,8 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppSnapshot, OperationEvent, PreloadApi } from "./shared/contracts";
+import type { NetworkPreloadApi } from "./shared/network-contracts";
 import { IPC_CHANNELS } from "./shared/ipc-channels";
 
-const api: PreloadApi = {
+const api: PreloadApi & NetworkPreloadApi = {
   getSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SNAPSHOT),
   openSource: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE),
   openSourcePath: (sourcePath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE_PATH, sourcePath),
@@ -11,6 +12,7 @@ const api: PreloadApi = {
   getServiceStats: (containerId) => ipcRenderer.invoke(IPC_CHANNELS.GET_SERVICE_STATS, containerId),
   updateSettings: (settings) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTINGS, settings),
   clearRecents: () => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_RECENTS),
+  updateProjectConfigFiles: (projectId, configFiles) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_PROJECT_CONFIG_FILES, projectId, configFiles),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {
@@ -41,13 +43,15 @@ const api: PreloadApi = {
     };
     ipcRenderer.on(IPC_CHANNELS.SNAPSHOT_EVENT, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.SNAPSHOT_EVENT, handler);
-  }
+  },
+  getNetworkTopology: () => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_GET_TOPOLOGY),
+  runNetworkAction: (request) => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_RUN_ACTION, request)
 };
 
 contextBridge.exposeInMainWorld("dockerExplorer", api);
 
 declare global {
   interface Window {
-    dockerExplorer: PreloadApi;
+    dockerExplorer: PreloadApi & NetworkPreloadApi;
   }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { NetworkTopologyView } from "./network/NetworkTopologyView";
 import { useAppStore } from "./store";
 
 export function App() {
@@ -16,7 +17,7 @@ export function App() {
   const selectProject = useAppStore((state) => state.selectProject);
   const toggleTheme = useAppStore((state) => state.toggleTheme);
   const selectedProjectId = useAppStore((state) => state.selectedProjectId);
-  const [screen, setScreen] = useState<"launcher" | "workspace">("launcher");
+  const [screen, setScreen] = useState<"launcher" | "workspace" | "network">("launcher");
   const activeProject = useMemo(
     () => snapshot?.projects.find((project) => project.id === selectedProjectId),
     [snapshot?.projects, selectedProjectId]
@@ -59,6 +60,7 @@ export function App() {
             }
           }}
           onToggleTheme={() => toggleTheme()}
+          onOpenNetwork={() => setScreen("network")}
           recents={snapshot?.recents ?? []}
           recentLoadingPath={recentLoadingPath}
           settings={snapshot?.settings}
@@ -68,6 +70,7 @@ export function App() {
       {screen === "workspace" ? (
         <ProjectWorkspace
           project={activeProject}
+          projects={snapshot?.projects ?? []}
           dockerStatus={snapshot?.dockerStatus}
           settings={snapshot?.settings}
           theme={theme}
@@ -75,7 +78,12 @@ export function App() {
           error={error}
           onBack={() => setScreen("launcher")}
           onToggleTheme={() => toggleTheme()}
+          onSelectProject={selectProject}
         />
+      ) : null}
+
+      {screen === "network" ? (
+        <NetworkTopologyView theme={theme} onBack={() => setScreen("launcher")} onToggleTheme={() => toggleTheme()} />
       ) : null}
     </div>
   );

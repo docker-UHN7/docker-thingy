@@ -13,8 +13,10 @@ export const ContainerInspectSchema = z.looseObject({
     .looseObject({
       Image: z.string().optional(),
       Env: z.array(z.string()).optional(),
-      Cmd: z.array(z.string()).optional(),
-      Entrypoint: z.array(z.string()).optional(),
+      // Docker returns null (not just an omitted key) for these when unset -
+      // e.g. an image with no Dockerfile CMD, or no explicit ENTRYPOINT.
+      Cmd: z.array(z.string()).nullish(),
+      Entrypoint: z.array(z.string()).nullish(),
       WorkingDir: z.string().optional(),
       Labels: z.record(z.string(), z.string()).optional(),
       ExposedPorts: z.record(z.string(), z.unknown()).optional()
@@ -84,7 +86,9 @@ export const ContainerInspectSchema = z.looseObject({
             IPAddress: z.string().optional(),
             Gateway: z.string().optional(),
             MacAddress: z.string().optional(),
-            Aliases: z.array(z.string()).optional()
+            // Docker returns null here (not [] or an omitted key) when no
+            // aliases are set, which is the common case.
+            Aliases: z.array(z.string()).nullish()
           })
         )
         .optional()
@@ -280,6 +284,9 @@ export type ProjectSummary = {
   composeProjectName?: string | undefined;
   sourcePath?: string | undefined;
   configFiles: string[];
+  allConfigFiles?: string[];
+  groupId?: string | undefined;
+  groupLabel?: string | undefined;
   services: ServiceNodeModel[];
   diagnostics: ProjectDiagnostics[];
   actions: ProjectAction[];
@@ -313,7 +320,7 @@ export type AppSnapshot = {
   recents: string[];
   settings: AppSettings;
   activeProjectId?: string | undefined;
-  activeSourceSession?: SourceSession | undefined;
+  activeSourceSession?: SourceSession | undefined; 
 };
 
 export type OpenSourceResult = Result<ProjectSummary>;
@@ -385,6 +392,7 @@ export type PreloadApi = {
   getServiceStats(containerId: string): Promise<StatsSnapshotResult>;
   updateSettings(settings: Partial<AppSettings>): Promise<AppSnapshot>;
   clearRecents(): Promise<AppSnapshot>;
+  updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<AppSnapshot>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;

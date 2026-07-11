@@ -466,7 +466,7 @@ function parseNetworks(inspected: z.infer<typeof ContainerInspectSchema>): Netwo
   }));
 }
 
-function toRuntimeContainer(inspected: z.infer<typeof ContainerInspectSchema>): RuntimeContainer {
+export function toRuntimeContainer(inspected: z.infer<typeof ContainerInspectSchema>): RuntimeContainer {
   const labels = inspected.Config?.Labels;
   const name = inspected.Name?.replace(/^\//, "") ?? inspected.Id.slice(0, 12);
   const healthStatus = normalizeHealth(inspected.State?.Health?.Status);
@@ -483,7 +483,7 @@ function toRuntimeContainer(inspected: z.infer<typeof ContainerInspectSchema>): 
   };
 }
 
-function toContainerDetails(inspected: z.infer<typeof ContainerInspectSchema>): ContainerDetails {
+export function toContainerDetails(inspected: z.infer<typeof ContainerInspectSchema>): ContainerDetails {
   return {
     containerId: inspected.Id,
     image: inspected.Config?.Image,
@@ -829,6 +829,71 @@ async function inspectContainers(
   return inspectedMap;
 }
 
+/** Every container on the host (any state), fully inspected - used by callers that need the whole fleet, not just a single Compose project's containers. */
+export async function listAllContainers(): Promise<z.infer<typeof ContainerInspectSchema>[]> {
+  const containerIdResult = await execCommand("docker", ["ps", "--all", "--quiet", "--no-trunc"], {
+    timeoutMs: PROCESS_LIMITS.runtimeDiscoveryMs,
+    maxBytes: PROCESS_LIMITS.maxJsonBytes,
+    category: "runtime-discovery"
+  });
+
+  const containerIds = containerIdResult.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const inspectedMap = await inspectContainers(containerIds);
+  return [...inspectedMap.values()];
+}
+
+const DockerNetworkRecordSchema = z.looseObject({
+  ID: z.string().optional(),
+  Name: z.string(),
+  Driver: z.string().optional()
+});
+
+export type DockerNetworkSummary = {
+  id: string;
+  name: string;
+  driver: string;
+};
+
+export async function listDockerNetworks(): Promise<DockerNetworkSummary[]> {
+  try {
+    const result = await execCommand("docker", ["network", "ls", "--format", "json"], {
+      timeoutMs: PROCESS_LIMITS.runtimeDiscoveryMs,
+      maxBytes: PROCESS_LIMITS.maxJsonBytes,
+      category: "runtime-discovery"
+    });
+
+    const parsed = parseJsonOrJsonLines(result.stdout, DockerNetworkRecordSchema);
+    if (!parsed.ok) {
+      return [];
+    }
+
+    return parsed.data.map((entry) => ({
+      id: entry.ID ?? "",
+      name: entry.Name,
+      driver: entry.Driver ?? ""
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** The Linux bridge interface backing a Docker bridge-driver network, following Docker's own naming convention. Non-bridge-driver networks (host/none/overlay) have no single backing interface. */
+export function dockerNetworkBridgeName(network: DockerNetworkSummary): string | undefined {
+  if (network.driver !== "bridge") {
+    return undefined;
+  }
+
+  if (network.name === "bridge") {
+    return "docker0";
+  }
+
+  return network.id ? `br-${network.id.slice(0, 12)}` : undefined;
+}
+
 async function discoverComposeProjectServices(
   contextName: string,
   projectName: string,
@@ -961,19 +1026,7 @@ export async function discoverRuntimeProjects(status: DockerStatus): Promise<Pro
       return [];
     }
 
-    const containerIdResult = await execCommand("docker", ["ps", "--all", "--quiet", "--no-trunc"], {
-      timeoutMs: PROCESS_LIMITS.runtimeDiscoveryMs,
-      maxBytes: PROCESS_LIMITS.maxJsonBytes,
-      category: "runtime-discovery"
-    });
-
-    const containerIds = containerIdResult.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const inspectedMap = await inspectContainers(containerIds);
-    const inspectedContainers = [...inspectedMap.values()];
+    const inspectedContainers = await listAllContainers();
 
     // Track containers that actually got attached to one of the resolved
     // compose projects below (rather than "any container carrying a compose

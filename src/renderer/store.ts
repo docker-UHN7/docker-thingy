@@ -80,6 +80,7 @@ type AppState = {
   toggleTheme(): void;
   updateSettings(settings: Partial<AppSettings>): Promise<void>;
   clearRecents(): Promise<void>;
+  updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<void>;
   activeProject(): ProjectSummary | undefined;
   runProjectAction(projectId: string, actionId: ExecutableProjectActionId): Promise<void>;
   handleOperationEvent(event: OperationEvent): void;
@@ -370,6 +371,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : "Failed to clear recent sources."
+      });
+    }
+  },
+  async updateProjectConfigFiles(projectId, configFiles) {
+    try {
+      const snapshot = await window.dockerExplorer.updateProjectConfigFiles(projectId, configFiles);
+      get().applySnapshot(snapshot);
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : "Failed to update active Compose files."
       });
     }
   },

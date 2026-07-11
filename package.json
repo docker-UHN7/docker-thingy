@@ -32,6 +32,7 @@
     "@xyflow/react": "latest",
     "electron-squirrel-startup": "latest",
     "elkjs": "latest",
+    "fast-xml-parser": "^5.10.0",
     "lucide-react": "^1.23.0",
     "react": "latest",
     "react-dom": "latest",

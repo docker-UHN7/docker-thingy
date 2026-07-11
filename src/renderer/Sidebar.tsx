@@ -5,6 +5,7 @@ import {
   FolderPlus,
   LoaderCircle,
   MoonStar,
+  Network,
   Search,
   Settings,
   SunMedium,
@@ -30,6 +31,7 @@ type SidebarProps = {
   onOpenSourcePath(sourcePath: string): void;
   onOpenRecent(sourcePath: string): void;
   onToggleTheme(): void;
+  onOpenNetwork(): void;
   recents: string[];
   recentLoadingPath?: string | undefined;
   settings?: AppSettings | undefined;
@@ -73,6 +75,7 @@ export function Sidebar({
   onOpenSourcePath,
   onOpenRecent,
   onToggleTheme,
+  onOpenNetwork,
   recents,
   recentLoadingPath,
   settings
@@ -106,7 +109,6 @@ export function Sidebar({
     });
   }, [deferredQuery, projects]);
   const showDaemonBanner = !dockerStatus?.daemonAvailable && !bannerDismissed;
-  const showHeaderPrimary = projects.length > 0;
   const staleHint = dockerStatus?.checkedAt
     ? `Docker was unreachable when this was last checked - showing cached data from ${new Date(dockerStatus.checkedAt).toLocaleString()}.`
     : "Docker was unreachable when this was last checked - showing cached data.";
@@ -130,6 +132,9 @@ export function Sidebar({
         </div>
 
         <div className="topbar__controls">
+          <button className="icon-button" onClick={onOpenNetwork} aria-label="Network topology">
+            <Network size={16} />
+          </button>
           <button className="icon-button" onClick={onToggleTheme} aria-label="Toggle theme">
             {theme === "dark" ? <SunMedium size={16} /> : <MoonStar size={16} />}
           </button>
@@ -243,6 +248,7 @@ export function Sidebar({
                       : lifecycle.hasRuntimeMatch
                         ? "Stopped"
                         : "Source only";
+
                 return (
                   <button
                     key={project.id}
@@ -265,17 +271,25 @@ export function Sidebar({
                         {middleTruncate(location, 34, 24)}
                       </p>
                       <div className="project-row__meta">
-                        <span><Boxes size={14} /> {project.services.length} services</span>
-                        <span><FileCode2 size={14} /> {project.runtimeKind === "compose" ? "Docker Compose" : project.runtimeKind}</span>
+                        <span>
+                          <Boxes size={14} /> {project.services.length} services
+                        </span>
+                        <span>
+                          <FileCode2 size={14} /> {project.runtimeKind === "compose" ? "Docker Compose" : project.runtimeKind}
+                        </span>
                         <span>{project.contextName}</span>
                       </div>
                     </div>
 
                     <span className="project-row__services">{project.services.length}</span>
-                    <span className="project-row__source" title={location}>{middleTruncate(location, 18, 16)}</span>
+                    <span className="project-row__source" title={location}>
+                      {middleTruncate(location, 18, 16)}
+                    </span>
                     <span className={`project-row__status project-row__status--${statusClass}`}>{statusLabel}</span>
                     <span className="project-row__updated">{project.lastUpdatedLabel}</span>
-                    <span className="project-row__open" aria-hidden="true"><ArrowRight size={16} /></span>
+                    <span className="project-row__open" aria-hidden="true">
+                      <ArrowRight size={16} />
+                    </span>
                   </button>
                 );
               })}
