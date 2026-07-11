@@ -7,8 +7,12 @@ import type {
   ReadSourceFileResult,
   SaveSourceFileResult
 } from "../shared/contracts";
+import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
+import { NetworkActionRequestSchema } from "../shared/network-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { ProjectService } from "./project-service";
+import { getNetworkTopology } from "./topology-service";
+import { runNetworkAction } from "./network-control-service";
 
 function isTrustedSender(mainWindow: BrowserWindow, event: IpcMainInvokeEvent): boolean {
   if (event.sender.id !== mainWindow.webContents.id) {
@@ -176,6 +180,42 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       });
     }
   );
+
+  ipcMain.handle(IPC_CHANNELS.NETWORK_GET_TOPOLOGY, async (event): Promise<NetworkTopologyResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    try {
+      return { ok: true, data: await getNetworkTopology() };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "PROCESS_FAILED",
+          message: error instanceof Error ? error.message : "Failed to load network topology."
+        }
+      };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.NETWORK_RUN_ACTION, async (event, request: unknown): Promise<NetworkActionResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    // Re-validate the shape here rather than trusting the renderer's typing -
+    // the same posture RUN_PROJECT_ACTION already takes on projectId/actionId.
+    const parsed = NetworkActionRequestSchema.safeParse(request);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "Invalid network action request." }
+      };
+    }
+
+    return runNetworkAction(parsed.data);
+  });
 }
 
 

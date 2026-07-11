@@ -10,6 +10,9 @@ export const PROCESS_LIMITS = {
   imageBuildMs: 15 * 60_000,
   logFetchMs: 15_000,
   statsFetchMs: 15_000,
+  // Generous enough to cover an interactive polkit auth prompt (pkexec)
+  // plus the (fast) privileged command itself.
+  networkControlMs: 120_000,
   maxJsonBytes: 20 * 1024 * 1024,
   maxDiagnosticBytes: 10 * 1024 * 1024,
   maxLogBytes: 2 * 1024 * 1024
@@ -23,7 +26,8 @@ export type CommandCategory =
   | "dockerfile-check"
   | "docker-build"
   | "logs"
-  | "stats";
+  | "stats"
+  | "network-control";
 
 export type ExecCommandOptions = {
   cwd?: string;
