@@ -47,6 +47,15 @@ function isExecutableActionId(value: string): value is ExecutableProjectActionId
   return EXECUTABLE_ACTION_IDS.has(value);
 }
 
+// Dockerfiles reached through a Compose service's build.dockerfile aren't
+// necessarily named exactly "Dockerfile" (e.g. "Dockerfile.dev",
+// "backend.Dockerfile"), so YAML validation on save has to be skipped by
+// filename, not by the owning project's runtimeKind.
+function looksLikeDockerfile(filePath: string): boolean {
+  const name = (filePath.split(/[/\\]/).pop() ?? "").toLowerCase();
+  return name === "dockerfile" || name.startsWith("dockerfile.") || name.endsWith(".dockerfile");
+}
+
 /**
  * Merges runtime-discovered Compose projects into any already-open source
  * project that resolves to the exact same config file, instead of appending
@@ -798,18 +807,23 @@ export class ProjectService {
     });
   }
 
-  // Only a path the project actually declared (its active configFiles or, for
-  // grouped folders, any sibling compose file discovered alongside it) may be
-  // read or written through the editor - the renderer only ever sends a
-  // projectId + path pair, and without this check that path could be steered
-  // at an arbitrary file on disk.
+  // Only a path the project actually declared - its active configFiles, a
+  // sibling compose file discovered alongside it, or a Dockerfile resolved
+  // from one of its services' build.context/build.dockerfile - may be read
+  // or written through the editor. The renderer only ever sends a
+  // projectId + path pair, and without this check that path could be
+  // steered at an arbitrary file on disk.
   private resolveEditableFile(projectId: string, filePath: string): { project: ProjectSummary } | undefined {
     const project = this.snapshot.projects.find((entry) => entry.id === projectId);
-    if (!project || project.access !== "editable" || project.runtimeKind !== "compose") {
+    if (!project || project.access !== "editable" || (project.runtimeKind !== "compose" && project.runtimeKind !== "dockerfile")) {
       return undefined;
     }
 
-    const allowedFiles = new Set([...project.configFiles, ...(project.allConfigFiles ?? [])]);
+    const allowedFiles = new Set([
+      ...project.configFiles,
+      ...(project.allConfigFiles ?? []),
+      ...(project.dockerfilePaths ?? [])
+    ]);
     if (!allowedFiles.has(filePath)) {
       return undefined;
     }
@@ -817,7 +831,7 @@ export class ProjectService {
     return { project };
   }
 
-  async readComposeFile(projectId: string, filePath: string): Promise<ReadSourceFileResult> {
+  async readSourceFile(projectId: string, filePath: string): Promise<ReadSourceFileResult> {
     if (!this.resolveEditableFile(projectId, filePath)) {
       return {
         ok: false,
@@ -836,7 +850,7 @@ export class ProjectService {
     }
   }
 
-  async saveComposeFile(
+  async saveSourceFile(
     projectId: string,
     filePath: string,
     sourceText: string,
@@ -851,12 +865,16 @@ export class ProjectService {
         };
       }
 
-      const parsed = parseDocument(sourceText);
-      if (parsed.errors.length > 0) {
-        return {
-          ok: false,
-          error: { code: "VALIDATION_FAILED", message: `Invalid YAML: ${parsed.errors[0]!.message}` }
-        };
+      // Dockerfiles aren't YAML - only compose files get parsed for a syntax
+      // check before hitting disk.
+      if (!looksLikeDockerfile(filePath)) {
+        const parsed = parseDocument(sourceText);
+        if (parsed.errors.length > 0) {
+          return {
+            ok: false,
+            error: { code: "VALIDATION_FAILED", message: `Invalid YAML: ${parsed.errors[0]!.message}` }
+          };
+        }
       }
 
       const saveResult = await saveSourceAtomically(filePath, sourceText, expectedHash);
@@ -871,7 +889,10 @@ export class ProjectService {
       }
 
       const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
-      const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+      const reloaded =
+        project.runtimeKind === "dockerfile"
+          ? await loadDockerfileProject(mainPath, contextName)
+          : await loadComposeProject(mainPath, contextName, project.configFiles);
       if (project.allConfigFiles) {
         reloaded.allConfigFiles = project.allConfigFiles;
       }

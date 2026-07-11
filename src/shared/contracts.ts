@@ -281,6 +281,7 @@ export type ProjectSummary = {
   sourcePath?: string | undefined;
   configFiles: string[];
   allConfigFiles?: string[];
+  dockerfilePaths?: string[];
   groupId?: string | undefined;
   groupLabel?: string | undefined;
   services: ServiceNodeModel[];

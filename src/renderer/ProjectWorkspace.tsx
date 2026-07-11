@@ -27,7 +27,6 @@ import type {
   ServiceNodeModel,
   StatsSnapshotResult
 } from "../shared/contracts";
-import { ComposeEditorPanel } from "./ComposeEditorPanel";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 import { distinguishingFileLabel, longestCommonPrefix } from "./compose-file-labels";
 import { Inspector } from "./Inspector";
@@ -36,6 +35,7 @@ import { OperationProgressPanel } from "./OperationProgressPanel";
 import { ProjectActionToolbar } from "./ProjectActionToolbar";
 import { GraphView } from "./graph/GraphView";
 import { deriveProjectLifecycle } from "./project-state";
+import { SourceEditorPanel } from "./SourceEditorPanel";
 import { useAppStore } from "./store";
 
 type ProjectWorkspaceProps = {
@@ -387,7 +387,8 @@ export function ProjectWorkspace({
   const commonFileNamePrefix = longestCommonPrefix(
     (project.allConfigFiles ?? []).map((file) => file.split(/[/\\]/).pop() ?? file)
   );
-  const canEditCompose = project.runtimeKind === "compose" && project.access === "editable";
+  const canEditSource =
+    project.access === "editable" && (project.runtimeKind === "compose" || project.runtimeKind === "dockerfile");
 
   return (
     <main className="workspace-screen">
@@ -585,10 +586,10 @@ export function ProjectWorkspace({
               <div className="workspace-toolbar__divider" />
 
               <div className="workspace-toolbar__cluster">
-                {canEditCompose ? (
+                {canEditSource ? (
                   <button
                     className="icon-button"
-                    aria-label="Edit compose file"
+                    aria-label="Edit source file"
                     aria-pressed={editorOpen}
                     onClick={() => {
                       setEditorOpen((value) => !value);
@@ -627,8 +628,8 @@ export function ProjectWorkspace({
           </Panel>
 
           <Panel position="center-right" style={{ margin: 16 }}>
-            {editorOpen && canEditCompose ? (
-              <ComposeEditorPanel project={project} onClose={() => setEditorOpen(false)} />
+            {editorOpen && canEditSource ? (
+              <SourceEditorPanel project={project} theme={theme} onClose={() => setEditorOpen(false)} />
             ) : settingsOpen && settings ? (
               <aside className="floating-panel detail-panel detail-panel--overlay">
                 <div className="detail-panel__header">

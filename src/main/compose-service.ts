@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { Document } from "yaml";
 import type {
@@ -421,6 +421,62 @@ function toServiceModels(document: Document): ServiceNodeModel[] {
   });
 }
 
+// A service's `build.context` + `build.dockerfile` only says where its
+// Dockerfile *should* live - Compose allows context to be a remote git URL,
+// and dockerfile is optional (defaults to "Dockerfile" inside the context).
+// This resolves that into an absolute local path the same way `docker
+// compose build` would (relative to the compose file's own directory), and
+// skips anything with no local path to resolve.
+function resolveDockerfileCandidate(
+  composeDir: string,
+  buildContext: string | undefined,
+  dockerfilePath: string | undefined
+): string | undefined {
+  if (!buildContext && !dockerfilePath) {
+    return undefined;
+  }
+
+  if (buildContext && /^[a-z][a-z0-9+.-]*:\/\//i.test(buildContext)) {
+    return undefined;
+  }
+
+  const contextDir = buildContext ? (isAbsolute(buildContext) ? buildContext : join(composeDir, buildContext)) : composeDir;
+
+  const fileName = dockerfilePath ?? "Dockerfile";
+  return isAbsolute(fileName) ? fileName : join(contextDir, fileName);
+}
+
+// Resolved candidates are existence-checked so the editor's file picker never
+// offers a Dockerfile path that turned out to be wrong (typo'd dockerfile:
+// field, context that doesn't exist yet, etc).
+async function resolveServiceDockerfilePaths(services: ServiceNodeModel[], composeDir: string): Promise<string[]> {
+  const candidates = new Set<string>();
+
+  for (const service of services) {
+    const candidate = resolveDockerfileCandidate(
+      composeDir,
+      service.sourceHints?.buildContext,
+      service.sourceHints?.dockerfilePath
+    );
+    if (candidate) {
+      candidates.add(candidate);
+    }
+  }
+
+  const checked = await Promise.all(
+    [...candidates].map(async (candidate) => {
+      try {
+        await access(candidate);
+        return candidate;
+      } catch {
+        return undefined;
+      }
+    })
+  );
+
+  return checked.filter((entry): entry is string => Boolean(entry));
+}
+
 function dedupePortMappings(portMappings: PortMapping[]): PortMapping[] {
   const seen = new Set<string>();
   const output: PortMapping[] = [];
@@ -546,6 +602,7 @@ export async function loadComposeProject(
   );
 
   const projectTitle = deriveComposeProjectTitle(declaredName, sourcePath);
+  const dockerfilePaths = await resolveServiceDockerfilePaths(mergedServices, dirname(sourcePath));
 
   return {
     id: `source-compose:${contextName}:${sourcePath}`,
@@ -559,6 +616,7 @@ export async function loadComposeProject(
     composeProjectName: projectTitle,
     sourcePath,
     configFiles: activeFiles,
+    dockerfilePaths,
     services: mergedServices,
     diagnostics: uniqueDiagnostics,
     actions: [

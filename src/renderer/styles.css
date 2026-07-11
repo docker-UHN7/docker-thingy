@@ -1074,25 +1074,19 @@ button {
   width: min(640px, calc(100vw - 64px));
 }
 
-.compose-editor__textarea {
-  width: 100%;
-  min-height: 420px;
-  resize: vertical;
+.compose-editor__cm-wrapper {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  padding: var(--space-3);
-  font-family: var(--font-mono, "IBM Plex Mono", monospace);
-  font-size: 0.85rem;
-  line-height: 1.5;
-  tab-size: 2;
-  white-space: pre;
-  overflow: auto;
+  overflow: hidden;
 }
 
-.compose-editor__textarea:disabled {
-  opacity: 0.6;
+.compose-editor__cm-wrapper .cm-editor {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.85rem;
+}
+
+.compose-editor__cm-wrapper .cm-scroller {
+  line-height: 1.5;
 }
 
 .compose-editor__actions {

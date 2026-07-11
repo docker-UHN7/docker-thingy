@@ -122,7 +122,7 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
         return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid read file request." } };
       }
 
-      return projectService.readComposeFile(projectId, filePath);
+      return projectService.readSourceFile(projectId, filePath);
     }
   );
 
@@ -148,7 +148,7 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
         return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid save file request." } };
       }
 
-      return projectService.saveComposeFile(projectId, filePath, sourceText, expectedHash);
+      return projectService.saveSourceFile(projectId, filePath, sourceText, expectedHash);
     }
   );
 

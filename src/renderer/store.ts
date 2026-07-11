@@ -83,8 +83,8 @@ type AppState = {
   updateSettings(settings: Partial<AppSettings>): Promise<void>;
   clearRecents(): Promise<void>;
   updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<void>;
-  readComposeFile(projectId: string, filePath: string): Promise<ReadSourceFileResult>;
-  saveComposeFile(
+  readSourceFile(projectId: string, filePath: string): Promise<ReadSourceFileResult>;
+  saveSourceFile(
     projectId: string,
     filePath: string,
     sourceText: string,
@@ -393,10 +393,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     }
   },
-  async readComposeFile(projectId, filePath) {
+  async readSourceFile(projectId, filePath) {
     return window.dockerExplorer.readSourceFile(projectId, filePath);
   },
-  async saveComposeFile(projectId, filePath, sourceText, expectedHash) {
+  async saveSourceFile(projectId, filePath, sourceText, expectedHash) {
     const result = await window.dockerExplorer.saveSourceFile(projectId, filePath, sourceText, expectedHash);
     if (result.ok) {
       get().applySnapshot(result.data.snapshot);
