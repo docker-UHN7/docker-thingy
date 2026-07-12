@@ -63,8 +63,6 @@ function pathPrimaryLabel(path: string): string {
   return parent ? `${parent}/${file}` : file;
 }
 
-type FileWithPath = File & { path?: string };
-
 export function Sidebar({
   projects,
   activeProjectId,
@@ -119,10 +117,11 @@ export function Sidebar({
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDropActive(false);
-    const files = Array.from(event.dataTransfer.files) as FileWithPath[];
-    const accepted = files.find((file) => file.path && isAcceptedSource(file.path));
-    if (accepted?.path) {
-      onOpenSourcePath(accepted.path);
+    const files = Array.from(event.dataTransfer.files);
+    const paths = files.map((file) => window.dockerExplorer.getPathForFile(file));
+    const accepted = paths.find((path) => isAcceptedSource(path));
+    if (accepted) {
+      onOpenSourcePath(accepted);
     }
   }
 

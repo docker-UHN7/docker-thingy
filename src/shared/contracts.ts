@@ -462,6 +462,12 @@ export type PreloadApi = {
   // throws NotAllowedError there. Electron's own `clipboard` module (used by
   // preload.ts's implementation) isn't gated by that check.
   copyToClipboard(text: string): Promise<void>;
+  // File.path was removed from dropped File objects in newer Electron
+  // versions when contextIsolation is on - webUtils.getPathForFile is the
+  // replacement, and it has to be called from the preload (webUtils is on
+  // the sandboxed preload allowlist, File.path resolution is not exposed to
+  // the renderer directly).
+  getPathForFile(file: File): string;
   getSnapshot(): Promise<AppSnapshot>;
   openSource(): Promise<OpenSourceResult>;
   createProject(): Promise<OpenSourceResult>;
