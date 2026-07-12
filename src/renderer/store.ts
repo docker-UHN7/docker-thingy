@@ -5,13 +5,17 @@ import type {
   AppSettings,
   AppSnapshot,
   ExecutableProjectActionId,
+  GetServiceFieldsResult,
   OperationEvent,
   ProjectSummary,
   ReadSourceFileResult,
   RemoveServiceResult,
   SaveSourceFileResult,
   SearchDockerHubResult,
-  ThemeMode
+  ServiceFieldsInput,
+  SnapshotMutationResult,
+  ThemeMode,
+  UpdateServiceFieldsResult
 } from "../shared/contracts";
 
 function deriveTheme(mode: ThemeMode): "dark" | "light" {
@@ -80,9 +84,11 @@ type AppState = {
   bootstrap(): Promise<void>;
   applySnapshot(snapshot: AppSnapshot, seedHint?: string | undefined): void;
   openSource(): Promise<boolean>;
+  createProject(): Promise<boolean>;
   openSourcePath(sourcePath: string): Promise<boolean>;
   openRecentSource(sourcePath: string): Promise<boolean>;
   selectProject(projectId: string): void;
+  touchRecentProject(projectId: string): Promise<void>;
   toggleTheme(): void;
   updateSettings(settings: Partial<AppSettings>): Promise<void>;
   clearRecents(): Promise<void>;
@@ -97,8 +103,17 @@ type AppState = {
   searchDockerHub(query: string): Promise<SearchDockerHubResult>;
   addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
   removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult>;
+  getServiceFields(projectId: string, serviceName: string): Promise<GetServiceFieldsResult>;
+  updateServiceFields(
+    projectId: string,
+    serviceName: string,
+    fields: ServiceFieldsInput
+  ): Promise<UpdateServiceFieldsResult>;
+  disconnectDependency(projectId: string, fromService: string, toService: string): Promise<SnapshotMutationResult>;
+  disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult>;
   activeProject(): ProjectSummary | undefined;
   runProjectAction(projectId: string, actionId: ExecutableProjectActionId): Promise<void>;
+  cancelProjectAction(projectId: string): Promise<void>;
   handleOperationEvent(event: OperationEvent): void;
 };
 
@@ -191,6 +206,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         loading: false,
         error: error instanceof Error ? error.message : "Opening source failed."
+      });
+      return false;
+    }
+  },
+  async createProject() {
+    set({ loading: true, error: undefined });
+    try {
+      const result = await window.dockerExplorer.createProject();
+      const current = get().snapshot;
+
+      if (!result.ok) {
+        set({ loading: false, error: result.error.message });
+        return false;
+      }
+
+      set({
+        snapshot: current
+          ? {
+              ...current,
+              projects: [result.data, ...current.projects.filter((project) => project.id !== result.data.id)],
+              recents: result.data.sourcePath
+                ? [result.data.sourcePath, ...current.recents.filter((entry) => entry !== result.data.sourcePath)].slice(0, 12)
+                : current.recents,
+              activeProjectId: result.data.id
+            }
+          : {
+              dockerStatus: {
+                cliAvailable: false,
+                daemonAvailable: false,
+                composeAvailable: false,
+                buildxAvailable: false,
+                message: "Docker status unavailable."
+              },
+              projects: [result.data],
+              recents: result.data.sourcePath ? [result.data.sourcePath] : [],
+              activeProjectId: result.data.id,
+              settings: {
+                themeMode: "dark",
+                statsPollSeconds: 3,
+                logTailLines: 200
+              }
+            },
+        selectedProjectId: result.data.id,
+        loading: false
+      });
+
+      return true;
+    } catch (error) {
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : "Creating project failed."
       });
       return false;
     }
@@ -297,6 +363,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   selectProject(projectId) {
     set({ selectedProjectId: projectId });
+  },
+  async touchRecentProject(projectId) {
+    try {
+      const snapshot = await window.dockerExplorer.touchRecentProject(projectId);
+      get().applySnapshot(snapshot);
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : "Failed to update recent projects."
+      });
+    }
   },
   toggleTheme() {
     const nextMode: ThemeMode = get().theme === "dark" ? "light" : "dark";
@@ -427,6 +503,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     return result;
   },
+  async getServiceFields(projectId, serviceName) {
+    return window.dockerExplorer.getServiceFields(projectId, serviceName);
+  },
+  async updateServiceFields(projectId, serviceName, fields) {
+    const result = await window.dockerExplorer.updateServiceFields(projectId, serviceName, fields);
+    if (result.ok) {
+      get().applySnapshot(result.data.snapshot);
+    }
+    return result;
+  },
+  async disconnectDependency(projectId, fromService, toService) {
+    const result = await window.dockerExplorer.disconnectDependency(projectId, fromService, toService);
+    if (result.ok) {
+      get().applySnapshot(result.data.snapshot);
+    }
+    return result;
+  },
+  async disconnectVolumeMount(projectId, serviceName, volumeName) {
+    const result = await window.dockerExplorer.disconnectVolumeMount(projectId, serviceName, volumeName);
+    if (result.ok) {
+      get().applySnapshot(result.data.snapshot);
+    }
+    return result;
+  },
   activeProject() {
     const { snapshot, selectedProjectId } = get();
     if (!snapshot) return undefined;
@@ -518,6 +618,18 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         };
       });
+    }
+  },
+  async cancelProjectAction(projectId) {
+    // No local state update here - main's own runProjectAction call is still
+    // in flight and will emit the final "failed"/cancelled status event
+    // through the same BUILD_EVENT stream handleOperationEvent already
+    // listens to, once the killed process's promise actually settles.
+    try {
+      await window.dockerExplorer.cancelProjectAction(projectId);
+    } catch {
+      // Best-effort - if the IPC call itself fails, the operation just runs
+      // until its own timeout; nothing further to do from here.
     }
   },
   handleOperationEvent(event) {

@@ -36,8 +36,9 @@ import { Inspector } from "./Inspector";
 import { LogsPanel } from "./LogsPanel";
 import { OperationProgressPanel } from "./OperationProgressPanel";
 import { ProjectActionToolbar } from "./ProjectActionToolbar";
-import { GraphView } from "./graph/GraphView";
+import { GraphView, type DisconnectableEdge } from "./graph/GraphView";
 import { deriveProjectLifecycle } from "./project-state";
+import { ServiceFieldsPanel } from "./ServiceFieldsPanel";
 import { SourceEditorPanel } from "./SourceEditorPanel";
 import { useAppStore } from "./store";
 import appLogo from "./assets/logo.png";
@@ -55,7 +56,7 @@ type ProjectWorkspaceProps = {
   onSelectProject(projectId: string): void;
 };
 
-type DetailTab = "overview" | "env" | "mounts" | "logs";
+type DetailTab = "overview" | "edit" | "env" | "mounts" | "logs";
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
@@ -130,12 +131,16 @@ export function ProjectWorkspace({
   const [composeSelectorOpen, setComposeSelectorOpen] = useState(false);
   const [removingServiceName, setRemovingServiceName] = useState<string | undefined>();
   const [removeServiceError, setRemoveServiceError] = useState<string | undefined>();
+  const [graphEditError, setGraphEditError] = useState<string | undefined>();
   const deferredQuery = useDeferredValue(query);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const clearRecents = useAppStore((state) => state.clearRecents);
   const updateProjectConfigFiles = useAppStore((state) => state.updateProjectConfigFiles);
   const removeServiceFromProject = useAppStore((state) => state.removeServiceFromProject);
+  const disconnectDependency = useAppStore((state) => state.disconnectDependency);
+  const disconnectVolumeMount = useAppStore((state) => state.disconnectVolumeMount);
   const runProjectAction = useAppStore((state) => state.runProjectAction);
+  const cancelProjectAction = useAppStore((state) => state.cancelProjectAction);
   const operations = useAppStore((state) => state.operations);
   const operation = project ? operations[project.id] : undefined;
 
@@ -390,6 +395,33 @@ export function ProjectWorkspace({
     }
   }
 
+  async function handleDisconnectEdge(edge: DisconnectableEdge) {
+    if (!project) {
+      return;
+    }
+
+    setGraphEditError(undefined);
+
+    if (edge.kind === "dependency") {
+      if (!window.confirm(`Remove dependency: "${edge.fromService}" no longer depends on "${edge.toService}"?`)) {
+        return;
+      }
+      const result = await disconnectDependency(project.id, edge.fromService, edge.toService);
+      if (!result.ok) {
+        setGraphEditError(result.error.message);
+      }
+      return;
+    }
+
+    if (!window.confirm(`Unmount "${edge.volumeName}" from "${edge.serviceName}"?`)) {
+      return;
+    }
+    const result = await disconnectVolumeMount(project.id, edge.serviceName, edge.volumeName);
+    if (!result.ok) {
+      setGraphEditError(result.error.message);
+    }
+  }
+
   const lifecycle = deriveProjectLifecycle(project);
   const runtimeStateLabel =
     lifecycle.state === "running"
@@ -424,6 +456,21 @@ export function ProjectWorkspace({
         </div>
       ) : null}
 
+      {graphEditError ? (
+        <div className="error-banner error-banner--inline">
+          <TriangleAlert size={16} />
+          <span>{graphEditError}</span>
+          <button
+            className="icon-button"
+            style={{ marginLeft: "auto" }}
+            onClick={() => setGraphEditError(undefined)}
+            aria-label="Dismiss"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
+
       <section className="workspace-canvas">
         <GraphView
           key={project.id}
@@ -443,6 +490,7 @@ export function ProjectWorkspace({
             setEditorOpen(false);
             setAddServiceOpen(false);
           }}
+          onDisconnectEdge={canAddService ? handleDisconnectEdge : undefined}
         >
           <Panel position="top-left" style={{ margin: 16 }}>
             <div className="floating-panel workspace-panel workspace-panel--project">
@@ -659,7 +707,12 @@ export function ProjectWorkspace({
           </Panel>
 
           <Panel position="bottom-center" style={{ margin: 16 }}>
-            <OperationProgressPanel operation={operation} projectTitle={project.title} includeValidate />
+            <OperationProgressPanel
+              operation={operation}
+              projectTitle={project.title}
+              includeValidate
+              onCancel={() => void cancelProjectAction(project.id)}
+            />
           </Panel>
 
           <Panel position="center-right" style={{ margin: 16 }}>
@@ -720,7 +773,15 @@ export function ProjectWorkspace({
                 ) : null}
 
                 <div className="detail-tabs">
-                  {(["overview", "env", "mounts", "logs"] as DetailTab[]).map((tab) => (
+                  {(
+                    [
+                      "overview",
+                      ...(canAddService ? (["edit"] as const) : []),
+                      "env",
+                      "mounts",
+                      "logs"
+                    ] as DetailTab[]
+                  ).map((tab) => (
                     <button
                       key={tab}
                       className={`detail-tab ${detailTab === tab ? "detail-tab--active" : ""}`}
@@ -733,6 +794,10 @@ export function ProjectWorkspace({
 
                 {detailTab === "overview" ? (
                   <Inspector service={selectedService} uptimeLabel={uptimeLabel} stats={statsState?.ok ? statsState.data : undefined} />
+                ) : null}
+
+                {detailTab === "edit" && canAddService ? (
+                  <ServiceFieldsPanel project={project} serviceName={selectedService.name} />
                 ) : null}
 
                 {detailTab === "env" ? (

@@ -1,13 +1,20 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSnapshot, OperationEvent, PreloadApi } from "./shared/contracts";
+import type { AppSnapshot, OperationEvent, PreloadApi, PullProgressEvent } from "./shared/contracts";
 import type { NetworkPreloadApi } from "./shared/network-contracts";
+import type { RemoteAccessPreloadApi } from "./shared/remote-access-contracts";
 import { IPC_CHANNELS } from "./shared/ipc-channels";
 
-const api: PreloadApi & NetworkPreloadApi = {
+const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
+  // Electron's `clipboard` module isn't part of the sandboxed preload
+  // allowlist (contextBridge, crashReporter, ipcRenderer, nativeImage,
+  // webFrame, webUtils only) - has to go through the main process instead.
+  copyToClipboard: (text) => ipcRenderer.invoke(IPC_CHANNELS.COPY_TO_CLIPBOARD, text),
   getSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SNAPSHOT),
   openSource: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE),
+  createProject: () => ipcRenderer.invoke(IPC_CHANNELS.CREATE_PROJECT),
   openSourcePath: (sourcePath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE_PATH, sourcePath),
   openRecentSource: (sourcePath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_RECENT_SOURCE, sourcePath),
+  touchRecentProject: (projectId) => ipcRenderer.invoke(IPC_CHANNELS.TOUCH_RECENT_PROJECT, projectId),
   openExternalUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_EXTERNAL_URL, url),
   getServiceLogs: (containerId, tail) => ipcRenderer.invoke(IPC_CHANNELS.GET_SERVICE_LOGS, containerId, tail),
   getServiceStats: (containerId) => ipcRenderer.invoke(IPC_CHANNELS.GET_SERVICE_STATS, containerId),
@@ -21,7 +28,16 @@ const api: PreloadApi & NetworkPreloadApi = {
   addServiceToProject: (projectId, input) => ipcRenderer.invoke(IPC_CHANNELS.ADD_SERVICE_TO_PROJECT, projectId, input),
   removeServiceFromProject: (projectId, serviceName) =>
     ipcRenderer.invoke(IPC_CHANNELS.REMOVE_SERVICE_FROM_PROJECT, projectId, serviceName),
+  getServiceFields: (projectId, serviceName) => ipcRenderer.invoke(IPC_CHANNELS.GET_SERVICE_FIELDS, projectId, serviceName),
+  updateServiceFields: (projectId, serviceName, fields) =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SERVICE_FIELDS, projectId, serviceName, fields),
+  disconnectDependency: (projectId, fromService, toService) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT_DEPENDENCY, projectId, fromService, toService),
+  disconnectVolumeMount: (projectId, serviceName, volumeName) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT_VOLUME_MOUNT, projectId, serviceName, volumeName),
+  pullImage: (image) => ipcRenderer.invoke(IPC_CHANNELS.PULL_IMAGE, image),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
+  cancelProjectAction: (projectId) => ipcRenderer.invoke(IPC_CHANNELS.CANCEL_PROJECT_ACTION, projectId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {
       try {
@@ -52,14 +68,34 @@ const api: PreloadApi & NetworkPreloadApi = {
     ipcRenderer.on(IPC_CHANNELS.SNAPSHOT_EVENT, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.SNAPSHOT_EVENT, handler);
   },
+  subscribePullProgress: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: PullProgressEvent) => {
+      try {
+        listener(payload);
+      } catch (error) {
+        console.error("[preload] pull progress listener failed", {
+          payload,
+          error
+        });
+        throw error;
+      }
+    };
+    ipcRenderer.on(IPC_CHANNELS.PULL_PROGRESS_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.PULL_PROGRESS_EVENT, handler);
+  },
   getNetworkTopology: () => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_GET_TOPOLOGY),
-  runNetworkAction: (request) => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_RUN_ACTION, request)
+  runNetworkAction: (request) => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_RUN_ACTION, request),
+  getRemoteAccessStatus: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_GET_STATUS),
+  enableRemoteAccess: (port, host) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_ENABLE, port, host),
+  disableRemoteAccess: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_DISABLE),
+  regenerateRemoteAccessToken: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_REGENERATE_TOKEN),
+  setRemoteAccessHost: (host) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_SET_HOST, host)
 };
 
 contextBridge.exposeInMainWorld("dockerExplorer", api);
 
 declare global {
   interface Window {
-    dockerExplorer: PreloadApi & NetworkPreloadApi;
+    dockerExplorer: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi;
   }
 }

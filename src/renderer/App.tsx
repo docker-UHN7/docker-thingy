@@ -12,9 +12,11 @@ export function App() {
   const recentLoadingPath = useAppStore((state) => state.recentLoadingPath);
   const bootstrap = useAppStore((state) => state.bootstrap);
   const openSource = useAppStore((state) => state.openSource);
+  const createProject = useAppStore((state) => state.createProject);
   const openSourcePath = useAppStore((state) => state.openSourcePath);
   const openRecentSource = useAppStore((state) => state.openRecentSource);
   const selectProject = useAppStore((state) => state.selectProject);
+  const touchRecentProject = useAppStore((state) => state.touchRecentProject);
   const toggleTheme = useAppStore((state) => state.toggleTheme);
   const selectedProjectId = useAppStore((state) => state.selectedProjectId);
   const [screen, setScreen] = useState<"launcher" | "workspace" | "network">("launcher");
@@ -39,10 +41,17 @@ export function App() {
           theme={theme}
           onSelect={(projectId) => {
             selectProject(projectId);
+            void touchRecentProject(projectId);
             setScreen("workspace");
           }}
           onOpenSource={async () => {
             const success = await openSource();
+            if (success && useAppStore.getState().selectedProjectId) {
+              setScreen("workspace");
+            }
+          }}
+          onCreateProject={async () => {
+            const success = await createProject();
             if (success && useAppStore.getState().selectedProjectId) {
               setScreen("workspace");
             }
@@ -78,7 +87,10 @@ export function App() {
           error={error}
           onBack={() => setScreen("launcher")}
           onToggleTheme={() => toggleTheme()}
-          onSelectProject={selectProject}
+          onSelectProject={(projectId) => {
+            selectProject(projectId);
+            void touchRecentProject(projectId);
+          }}
         />
       ) : null}
 

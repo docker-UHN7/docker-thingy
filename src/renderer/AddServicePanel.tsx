@@ -13,6 +13,12 @@ type SelectionSource =
   | { kind: "preset"; preset: ServicePreset }
   | { kind: "hub"; result: DockerHubSearchResult; preset: ServicePreset | undefined };
 
+type PullState =
+  | { status: "idle" }
+  | { status: "pulling"; message: string }
+  | { status: "done" }
+  | { status: "error"; message: string };
+
 function slugifyServiceName(name: string): string {
   const slug = name
     .toLowerCase()
@@ -54,6 +60,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | undefined>();
   const [justAdded, setJustAdded] = useState(false);
+  const [pullState, setPullState] = useState<PullState>({ status: "idle" });
 
   const presetMatches = useMemo(() => searchPresets(query), [query]);
 
@@ -102,6 +109,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
     setConnectTo(new Set());
     setSubmitError(undefined);
     setJustAdded(false);
+    setPullState({ status: "idle" });
   }
 
   function selectHubResult(result: DockerHubSearchResult) {
@@ -114,11 +122,38 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
     setConnectTo(new Set());
     setSubmitError(undefined);
     setJustAdded(false);
+    setPullState({ status: "idle" });
   }
 
   function goBack() {
     setSelection(undefined);
     setSubmitError(undefined);
+    setPullState({ status: "idle" });
+  }
+
+  // Pulls the just-added image in the background and streams live progress
+  // into the panel - the service is already written to the compose file at
+  // this point either way, this just gets the image warmed up so the first
+  // `docker compose up` isn't waiting on a slow download.
+  async function pullImageWithProgress(targetImage: string) {
+    setPullState({ status: "pulling", message: "Starting pull..." });
+
+    const unsubscribe = window.dockerExplorer.subscribePullProgress((event) => {
+      if (event.image !== targetImage) {
+        return;
+      }
+
+      const percent =
+        event.current !== undefined && event.total !== undefined && event.total > 0
+          ? ` ${Math.round((event.current / event.total) * 100)}%`
+          : "";
+      setPullState({ status: "pulling", message: `${event.status}${percent}` });
+    });
+
+    const result = await window.dockerExplorer.pullImage(targetImage);
+    unsubscribe();
+
+    setPullState(result.ok ? { status: "done" } : { status: "error", message: result.error.message });
   }
 
   function updateEnvValue(key: string, value: string) {
@@ -148,18 +183,21 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
 
     setSubmitting(true);
     setSubmitError(undefined);
+    setPullState({ status: "idle" });
 
     const connections: AddServiceConnection[] = [...connectTo].map((targetName) => ({
       serviceName: targetName,
       environment: preset ? resolveConnectionEnv(preset, serviceName, environment) : {}
     }));
 
+    const targetImage = image;
+
     // exactOptionalPropertyTypes rejects `key: undefined` for optional
     // fields - build the payload by only including keys that have a value,
     // rather than assigning `undefined` to them.
     const result = await addServiceToProject(project.id, {
       serviceName,
-      image,
+      image: targetImage,
       connectTo: connections,
       ...(Object.keys(environment).length > 0 ? { environment } : {}),
       ...(preset?.volumeMountPath
@@ -174,8 +212,11 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
       return;
     }
 
+    // The service is written to the compose file either way - pulling the
+    // image is best-effort background work from here on, so its own
+    // success/failure never blocks or reopens the "add" flow.
     setJustAdded(true);
-    window.setTimeout(onClose, 900);
+    void pullImageWithProgress(targetImage);
   }
 
   return (
@@ -317,6 +358,23 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
             <div className="detail-list__row detail-list__row--error">
               <CircleAlert size={14} />
               <span className="mono-value">{submitError}</span>
+            </div>
+          ) : null}
+
+          {pullState.status === "pulling" ? (
+            <div className="detail-list__row detail-list__row--loading">
+              <LoaderCircle size={14} className="busy spin" />
+              <span className="mono-value">Pulling {image}... {pullState.message}</span>
+            </div>
+          ) : pullState.status === "done" ? (
+            <div className="detail-list__row">
+              <Check size={14} />
+              <span className="mono-value">Image ready.</span>
+            </div>
+          ) : pullState.status === "error" ? (
+            <div className="detail-list__row detail-list__row--error">
+              <CircleAlert size={14} />
+              <span className="mono-value">Image pull failed: {pullState.message}</span>
             </div>
           ) : null}
 

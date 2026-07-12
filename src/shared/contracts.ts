@@ -128,7 +128,8 @@ export type Result<T> =
           | "TIMEOUT"
           | "SOURCE_CHANGED_EXTERNALLY"
           | "VALIDATION_FAILED"
-          | "OPERATION_IN_PROGRESS";
+          | "OPERATION_IN_PROGRESS"
+          | "CANCELLED";
         message: string;
         details?: string | undefined;
       };
@@ -384,6 +385,8 @@ export type ProjectActionResult = Result<{
   snapshot: AppSnapshot;
 }>;
 
+export type CancelActionResult = Result<{ cancelled: true }>;
+
 export type ReadSourceFileResult = Result<{ sourceText: string; hash: string }>;
 export type SaveSourceFileResult = Result<{ hash: string; snapshot: AppSnapshot }>;
 
@@ -415,11 +418,56 @@ export type SearchDockerHubResult = Result<{ results: DockerHubSearchResult[] }>
 
 export type RemoveServiceResult = Result<{ snapshot: AppSnapshot; serviceName: string }>;
 
+// The graphical fields the side-panel "Edit" tab exposes for a Compose
+// service. Read/written straight from the service's block in the compose
+// file - not the same as ServiceNodeModel, which is a merged, display-ready
+// projection built from every active file and (for ports/volumes) already
+// lossy in ways that make it unsuitable for editing.
+export type ServiceFields = {
+  image: string;
+  restart: string;
+  ports: string[];
+  volumes: string[];
+  dependsOn: string[];
+  environment: Record<string, string>;
+};
+
+export type ServiceFieldsInput = Partial<ServiceFields>;
+
+export type GetServiceFieldsResult = Result<{ fields: ServiceFields }>;
+export type UpdateServiceFieldsResult = Result<{ snapshot: AppSnapshot }>;
+
+// A project mutation that only ever needs to hand back the refreshed
+// snapshot - used by the graph view's click-to-disconnect actions.
+export type SnapshotMutationResult = Result<{ snapshot: AppSnapshot }>;
+
+// Streamed while an image pull (dockerode) is in flight - `image` lets
+// listeners with several pulls potentially in flight filter to the one they
+// care about. `current`/`total` are byte counts for the layer named by `id`,
+// straight from the Docker Engine API's own progress payload.
+export type PullProgressEvent = {
+  image: string;
+  status: string;
+  id?: string | undefined;
+  current?: number | undefined;
+  total?: number | undefined;
+};
+
+export type PullImageResult = Result<{ pulled: true }>;
+
 export type PreloadApi = {
+  // Routed through here rather than the web Clipboard API directly - the
+  // Electron BrowserWindow denies every permission request/check (see
+  // main.ts), which includes clipboard-write, so navigator.clipboard.writeText
+  // throws NotAllowedError there. Electron's own `clipboard` module (used by
+  // preload.ts's implementation) isn't gated by that check.
+  copyToClipboard(text: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   openSource(): Promise<OpenSourceResult>;
+  createProject(): Promise<OpenSourceResult>;
   openSourcePath(sourcePath: string): Promise<OpenSourceResult>;
   openRecentSource(sourcePath: string): Promise<OpenSourceResult>;
+  touchRecentProject(projectId: string): Promise<AppSnapshot>;
   openExternalUrl(url: string): Promise<void>;
   getServiceLogs(containerId: string, tail: number): Promise<LogSnapshotResult>;
   getServiceStats(containerId: string): Promise<StatsSnapshotResult>;
@@ -436,7 +484,18 @@ export type PreloadApi = {
   searchDockerHub(query: string): Promise<SearchDockerHubResult>;
   addServiceToProject(projectId: string, input: AddServiceInput): Promise<AddServiceResult>;
   removeServiceFromProject(projectId: string, serviceName: string): Promise<RemoveServiceResult>;
+  getServiceFields(projectId: string, serviceName: string): Promise<GetServiceFieldsResult>;
+  updateServiceFields(
+    projectId: string,
+    serviceName: string,
+    fields: ServiceFieldsInput
+  ): Promise<UpdateServiceFieldsResult>;
+  disconnectDependency(projectId: string, fromService: string, toService: string): Promise<SnapshotMutationResult>;
+  disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult>;
+  pullImage(image: string): Promise<PullImageResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
+  cancelProjectAction(projectId: string): Promise<CancelActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;
+  subscribePullProgress(listener: (event: PullProgressEvent) => void): () => void;
 };

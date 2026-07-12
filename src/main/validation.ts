@@ -51,6 +51,14 @@ export function isValidServiceName(value: unknown): value is string {
   return typeof value === "string" && SERVICE_NAME_PATTERN.test(value);
 }
 
+// Compose's restart policy grammar: a fixed set of keywords, with
+// "on-failure" optionally taking a max-retry count.
+const RESTART_POLICY_PATTERN = /^(no|always|unless-stopped|on-failure(:\d+)?)$/;
+
+export function isValidRestartPolicy(value: unknown): value is string {
+  return typeof value === "string" && RESTART_POLICY_PATTERN.test(value);
+}
+
 const MIN_LOG_TAIL = 1;
 const MAX_LOG_TAIL = 10_000;
 const DEFAULT_LOG_TAIL = 200;

@@ -2,7 +2,7 @@ import { dialog } from "electron";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
-import { access, readFile, readdir, stat } from "node:fs/promises";
+import { access, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, dirname, basename, extname } from "node:path";
 import { parseDocument } from "yaml";
 import type {
@@ -10,7 +10,9 @@ import type {
   AddServiceResult,
   AppSettings,
   AppSnapshot,
+  CancelActionResult,
   ExecutableProjectActionId,
+  GetServiceFieldsResult,
   LogSnapshotResult,
   OpenSourceResult,
   OperationEvent,
@@ -19,8 +21,12 @@ import type {
   ProjectSummary,
   ReadSourceFileResult,
   RemoveServiceResult,
+  Result,
   SaveSourceFileResult,
+  ServiceFieldsInput,
+  SnapshotMutationResult,
   StatsSnapshotResult,
+  UpdateServiceFieldsResult,
   ValidationOutcome
 } from "../shared/contracts";
 import {
@@ -31,11 +37,26 @@ import {
   mergeSourceProjectWithRuntime,
   resolveConfigKey
 } from "./docker-service";
-import { addServiceToCompose, hashSource, loadComposeProject, removeServiceFromCompose } from "./compose-service";
+import {
+  addServiceToCompose,
+  applyServiceFieldEdits,
+  hashSource,
+  loadComposeProject,
+  readServiceFields,
+  removeDependencyEdge,
+  removeServiceFromCompose,
+  removeVolumeMount
+} from "./compose-service";
 import { loadDockerfileProject, validateImageTag } from "./dockerfile-service";
 import { executeProjectAction } from "./operation-runner";
 import { isTimeoutError } from "./process-runner";
-import { isValidContainerRef, isValidServiceName, normalizeLogTail, sanitizeSettingsPatch } from "./validation";
+import {
+  isValidContainerRef,
+  isValidRestartPolicy,
+  isValidServiceName,
+  normalizeLogTail,
+  sanitizeSettingsPatch
+} from "./validation";
 import { saveSourceAtomically } from "./atomic-save";
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
@@ -123,6 +144,26 @@ async function filterExistingRecentSources(paths: string[]): Promise<string[]> {
   );
 
   return checks.filter((entry): entry is string => Boolean(entry)).slice(0, 12);
+}
+
+async function resolveRecentPathForProject(project: ProjectSummary): Promise<string | undefined> {
+  const candidates = [
+    project.sourcePath,
+    ...project.configFiles,
+    ...(project.allConfigFiles ?? []),
+    ...(project.dockerfilePaths ?? [])
+  ].filter((entry): entry is string => Boolean(entry));
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return undefined;
 }
 
 interface ComposeProjectGroup {
@@ -255,6 +296,11 @@ export function applyProjectGrouping(directoryPath: string, projects: ProjectSum
   }));
 }
 
+const NEW_PROJECT_COMPOSE_TEMPLATE = `# New Compose project - use "Add service" in the app to add your first
+# service from a preset or Docker Hub, or edit this file directly.
+services: {}
+`;
+
 const DEFAULT_SETTINGS: AppSettings = {
   themeMode: "dark",
   statsPollSeconds: 3,
@@ -280,13 +326,18 @@ export class ProjectService {
   }
 
   // Tracks which project ids currently have a long-running operation
-  // (validate/apply-start/stop/build-image) in flight, keyed by project id.
+  // (validate/apply-start/stop/build-image) in flight, keyed by project id -
+  // both the concurrency guard for "don't start a second operation on the
+  // same project" and, via `controller`, the handle cancelProjectAction uses
+  // to actually kill the underlying docker/compose process on demand.
   // Deliberately NOT folded into `lock`: that lock only guards short
   // read-await-write snapshot spans, whereas a build can run for minutes and
   // must not block unrelated snapshot reads/writes (e.g. synchronizing a
-  // different project) for that whole time. This map is the concurrency
-  // guard for "don't start a second operation on the same project".
-  private activeOperations = new Map<string, ExecutableProjectActionId>();
+  // different project) for that whole time.
+  private activeOperations = new Map<
+    string,
+    { actionId: ExecutableProjectActionId; controller: AbortController }
+  >();
   private snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
   private sourceWatchers = new Map<string, FSWatcher>();
   private sourceReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -711,6 +762,68 @@ export class ProjectService {
     });
   }
 
+  /**
+   * "Create project": picks a folder and either scaffolds a fresh, empty
+   * docker-compose.yml there (the common case - build the project up from
+   * scratch via "Add service" or the editor), or, if that folder already
+   * has a Compose project or Dockerfile, asks whether to open the existing
+   * one instead of silently creating a second, conflicting compose file.
+   */
+  async createProject(): Promise<OpenSourceResult> {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory", "createDirectory"]
+    });
+
+    const directoryPath = result.filePaths[0];
+    if (!directoryPath) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "No folder was selected." }
+      };
+    }
+
+    const groups = await scanDirectoryForComposeProjects(directoryPath);
+    const dockerfilePath = join(directoryPath, "Dockerfile");
+    let hasDockerfile = false;
+    try {
+      await access(dockerfilePath);
+      hasDockerfile = true;
+    } catch {}
+
+    if (groups.length > 0 || hasDockerfile) {
+      const choice = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["Open existing project", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "This folder already has a Compose project",
+        detail: "Open the existing project instead of creating a new one? Choose an empty folder to create a fresh project."
+      });
+
+      if (choice.response !== 0) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "That folder already contains a project. Pick an empty folder to create a new one, or open the existing project."
+          }
+        };
+      }
+
+      const mainFile = groups[0]?.mainFile ?? dockerfilePath;
+      return this.openSourcePath(mainFile);
+    }
+
+    return this.withLock(async () => {
+      const newComposePath = join(directoryPath, "docker-compose.yml");
+      await writeFile(newComposePath, NEW_PROJECT_COMPOSE_TEMPLATE, "utf8");
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const project = await loadComposeProject(newComposePath, contextName, [newComposePath]);
+      return this.commitOpenedProjects(newComposePath, project, [project]);
+    });
+  }
+
   async openSourcePath(sourcePath: string): Promise<OpenSourceResult> {
     if (typeof sourcePath !== "string" || sourcePath.trim() === "") {
       return {
@@ -777,6 +890,27 @@ export class ProjectService {
 
   async openRecentSource(sourcePath: string): Promise<OpenSourceResult> {
     return this.openSourcePath(sourcePath);
+  }
+
+  async touchRecentProject(projectId: string): Promise<AppSnapshot> {
+    return this.withLock(async () => {
+      const project = this.snapshot.projects.find((entry) => entry.id === projectId);
+      if (!project) {
+        return this.snapshot;
+      }
+
+      const recentPath = await resolveRecentPathForProject(project);
+      if (!recentPath) {
+        return this.snapshot;
+      }
+
+      this.snapshot = {
+        ...this.snapshot,
+        recents: [recentPath, ...this.snapshot.recents.filter((entry) => entry !== recentPath)].slice(0, 12)
+      };
+      this.emitSnapshot();
+      return this.snapshot;
+    });
   }
 
   async updateProjectConfigFiles(projectId: string, configFiles: string[]): Promise<AppSnapshot> {
@@ -1089,6 +1223,236 @@ export class ProjectService {
     });
   }
 
+  private resolveServiceEditContext(
+    projectId: string,
+    serviceName: string
+  ): { project: ProjectSummary; mainPath: string } | { error: Extract<Result<unknown>, { ok: false }> } {
+    const project = this.snapshot.projects.find((entry) => entry.id === projectId);
+    if (!project || project.runtimeKind !== "compose" || project.access !== "editable") {
+      return {
+        error: {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: "Project not found or is not an editable Compose project." }
+        }
+      };
+    }
+
+    if (!project.services.some((service) => service.name === serviceName)) {
+      return {
+        error: {
+          ok: false,
+          error: { code: "VALIDATION_FAILED", message: `Service "${serviceName}" was not found in this project.` }
+        }
+      };
+    }
+
+    const mainPath = project.sourcePath ?? project.configFiles[0];
+    if (!mainPath) {
+      return {
+        error: { ok: false, error: { code: "VALIDATION_FAILED", message: "Project has no known source path." } }
+      };
+    }
+
+    return { project, mainPath };
+  }
+
+  /**
+   * Reads a service's graphical fields (image, restart, ports, volumes,
+   * depends_on, environment) straight from the project's base compose file,
+   * for the side-panel "Edit" tab. A service only declared in an override
+   * file (not the base file) isn't readable here - the same base-file-only
+   * scope addServiceToProject/removeServiceFromProject already have.
+   */
+  async getServiceFields(projectId: string, serviceName: string): Promise<GetServiceFieldsResult> {
+    const context = this.resolveServiceEditContext(projectId, serviceName);
+    if ("error" in context) {
+      return context.error;
+    }
+
+    try {
+      const sourceText = await readFile(context.mainPath, "utf8");
+      const fields = readServiceFields(sourceText, serviceName);
+      if (!fields) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: `Service "${serviceName}" isn't declared in ${context.mainPath} - it may only be defined in an override file, which this editor doesn't support yet.`
+          }
+        };
+      }
+
+      return { ok: true, data: { fields } };
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: "PROCESS_FAILED", message: error instanceof Error ? error.message : "Unable to read service fields." }
+      };
+    }
+  }
+
+  /**
+   * Writes graphical field edits from the side panel back to the compose
+   * file. Every field present in `fields` is fully replaced (add/remove-row
+   * form semantics), then the project reloads so the graph reflects the
+   * change immediately - the same hash-checked atomic save + reload
+   * pipeline as every other compose mutation in this class.
+   */
+  async updateServiceFields(
+    projectId: string,
+    serviceName: string,
+    fields: ServiceFieldsInput
+  ): Promise<UpdateServiceFieldsResult> {
+    return this.withLock(async () => {
+      const context = this.resolveServiceEditContext(projectId, serviceName);
+      if ("error" in context) {
+        return context.error;
+      }
+      const { project, mainPath } = context;
+
+      if (fields.image !== undefined) {
+        const imageCheck = validateImageTag(fields.image);
+        if (!imageCheck.ok) {
+          return { ok: false, error: { code: "VALIDATION_FAILED", message: imageCheck.detail } };
+        }
+      }
+
+      if (fields.restart !== undefined && fields.restart.trim() !== "" && !isValidRestartPolicy(fields.restart)) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: 'Invalid restart policy - use "no", "always", "unless-stopped", or "on-failure[:max-retries]".'
+          }
+        };
+      }
+
+      const knownServiceNames = new Set(project.services.map((service) => service.name));
+      for (const dependency of fields.dependsOn ?? []) {
+        if (dependency === serviceName) {
+          return {
+            ok: false,
+            error: { code: "VALIDATION_FAILED", message: "A service cannot depend on itself." }
+          };
+        }
+        if (!knownServiceNames.has(dependency)) {
+          return {
+            ok: false,
+            error: { code: "VALIDATION_FAILED", message: `Service "${dependency}" was not found in this project.` }
+          };
+        }
+      }
+
+      const currentText = await readFile(mainPath, "utf8");
+      const { sourceText: nextText } = applyServiceFieldEdits(currentText, serviceName, fields);
+
+      const saveResult = await saveSourceAtomically(mainPath, nextText, hashSource(currentText));
+      if (!saveResult.ok) {
+        return saveResult;
+      }
+
+      const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+      const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+      if (project.allConfigFiles) {
+        reloaded.allConfigFiles = project.allConfigFiles;
+      }
+      if (project.groupId) {
+        reloaded.groupId = project.groupId;
+        reloaded.groupLabel = project.groupLabel;
+      }
+
+      const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+      const sourceProjects = this.snapshot.projects.filter(
+        (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+      );
+      const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+      this.snapshot = {
+        ...this.snapshot,
+        projects: mergedProjects
+      };
+      this.emitSnapshot();
+
+      return { ok: true, data: { snapshot: this.snapshot } };
+    });
+  }
+
+  // Shared tail end of every "mutate the base compose file, then reload"
+  // operation: hash-checked atomic save, reload the project, merge it back
+  // into the snapshot, and emit. Callers own their own validation and must
+  // already be inside withLock - this only exists to stop that reload/merge
+  // boilerplate from growing a sixth near-identical copy (see
+  // addServiceToProject/removeServiceFromProject/updateServiceFields above).
+  private async applyComposeMutationAndReload(
+    project: ProjectSummary,
+    mainPath: string,
+    mutate: (sourceText: string) => string
+  ): Promise<SnapshotMutationResult> {
+    const currentText = await readFile(mainPath, "utf8");
+    const nextText = mutate(currentText);
+
+    const saveResult = await saveSourceAtomically(mainPath, nextText, hashSource(currentText));
+    if (!saveResult.ok) {
+      return saveResult;
+    }
+
+    const contextName = this.snapshot.dockerStatus.contextName ?? "unknown-context";
+    const reloaded = await loadComposeProject(mainPath, contextName, project.configFiles);
+    if (project.allConfigFiles) {
+      reloaded.allConfigFiles = project.allConfigFiles;
+    }
+    if (project.groupId) {
+      reloaded.groupId = project.groupId;
+      reloaded.groupLabel = project.groupLabel;
+    }
+
+    const runtimeProjects = this.snapshot.projects.filter((entry) => entry.access === "runtime-only");
+    const sourceProjects = this.snapshot.projects.filter(
+      (entry) => entry.access !== "runtime-only" && entry.id !== reloaded.id
+    );
+    const mergedProjects = mergeProjectLists(reloaded.contextName, [reloaded, ...sourceProjects], runtimeProjects);
+
+    this.snapshot = {
+      ...this.snapshot,
+      projects: mergedProjects
+    };
+    this.emitSnapshot();
+
+    return { ok: true, data: { snapshot: this.snapshot } };
+  }
+
+  /** Click-to-disconnect for a depends_on edge in the graph view. */
+  async disconnectDependency(projectId: string, fromService: string, toService: string): Promise<SnapshotMutationResult> {
+    return this.withLock(async () => {
+      const context = this.resolveServiceEditContext(projectId, fromService);
+      if ("error" in context) {
+        return context.error;
+      }
+
+      return this.applyComposeMutationAndReload(
+        context.project,
+        context.mainPath,
+        (text) => removeDependencyEdge(text, fromService, toService).sourceText
+      );
+    });
+  }
+
+  /** Click-to-disconnect for a volume-mount edge in the graph view. */
+  async disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult> {
+    return this.withLock(async () => {
+      const context = this.resolveServiceEditContext(projectId, serviceName);
+      if ("error" in context) {
+        return context.error;
+      }
+
+      return this.applyComposeMutationAndReload(
+        context.project,
+        context.mainPath,
+        (text) => removeVolumeMount(text, serviceName, volumeName).sourceText
+      );
+    });
+  }
+
   async getServiceLogs(containerId: string, tail: number): Promise<LogSnapshotResult> {
     if (!isValidContainerRef(containerId)) {
       return {
@@ -1183,16 +1547,22 @@ export class ProjectService {
       };
     }
 
-    this.activeOperations.set(projectId, actionId);
+    const controller = new AbortController();
+    this.activeOperations.set(projectId, { actionId, controller });
     const operationId = randomUUID();
     const startedAt = new Date().toISOString();
 
     onEvent({ kind: "status", projectId, operationId, actionId, status: "running", startedAt });
 
     try {
-      const outcome = await executeProjectAction(project, actionId, (stream, line) => {
-        onEvent({ kind: "output", projectId, operationId, actionId, stream, line });
-      });
+      const outcome = await executeProjectAction(
+        project,
+        actionId,
+        (stream, line) => {
+          onEvent({ kind: "output", projectId, operationId, actionId, stream, line });
+        },
+        controller.signal
+      );
 
       let snapshot = await this.finalizeOperation(projectId, actionId, outcome);
       if (actionId !== "validate") {
@@ -1214,7 +1584,16 @@ export class ProjectService {
 
       return { ok: true, data: { operationId, outcome, snapshot } };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "The operation failed unexpectedly.";
+      // cancelProjectAction aborts `controller` directly - by the time the
+      // killed process's promise rejects here, `signal.aborted` is the only
+      // reliable way to tell "the user cancelled this" apart from any other
+      // process failure (a plain kill doesn't come back as a timeout error).
+      const cancelled = controller.signal.aborted;
+      const message = cancelled
+        ? "Operation cancelled."
+        : error instanceof Error
+          ? error.message
+          : "The operation failed unexpectedly.";
 
       onEvent({
         kind: "status",
@@ -1229,11 +1608,30 @@ export class ProjectService {
 
       return {
         ok: false,
-        error: { code: isTimeoutError(error) ? "TIMEOUT" : "PROCESS_FAILED", message }
+        error: { code: cancelled ? "CANCELLED" : isTimeoutError(error) ? "TIMEOUT" : "PROCESS_FAILED", message }
       };
     } finally {
       this.activeOperations.delete(projectId);
     }
+  }
+
+  /**
+   * Aborts whatever operation is currently running for `projectId` (if any).
+   * The in-flight `runProjectAction` call observes the same AbortController
+   * and handles its own cleanup/status event once the killed process's
+   * promise settles - this just triggers that.
+   */
+  async cancelProjectAction(projectId: string): Promise<CancelActionResult> {
+    const active = this.activeOperations.get(projectId);
+    if (!active) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "No operation is currently running for this project." }
+      };
+    }
+
+    active.controller.abort();
+    return { ok: true, data: { cancelled: true } };
   }
 
   private async finalizeOperation(
