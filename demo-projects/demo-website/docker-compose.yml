@@ -1,0 +1,25 @@
+name: demo-website
+
+services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://demo:demo@postgres:5432/demodb
+      REDIS_URL: redis://redis:6379
+    ports:
+      - 3002:3000
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3002
+    ports:
+      - 8888:3001
+    depends_on:
+      - backend
