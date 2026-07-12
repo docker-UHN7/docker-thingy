@@ -82,6 +82,11 @@ export function createRemoteBridge(token: string): PreloadApi & NetworkPreloadAp
     // to main.ts's blanket permission denial, so the standard web Clipboard
     // API works fine here.
     copyToClipboard: (text) => navigator.clipboard.writeText(text),
+    // Browsers never exposed File.path even before Electron dropped it, and
+    // drag-drop-to-open isn't wired into the remote HTTP surface anyway.
+    getPathForFile: () => {
+      throw new Error(NOT_LOCAL_MESSAGE);
+    },
     getSnapshot: () => getJson<AppSnapshot>("/api/snapshot", token),
     openSource: () => Promise.reject(new Error(NOT_LOCAL_MESSAGE)),
     createProject: () => Promise.reject(new Error(NOT_LOCAL_MESSAGE)),

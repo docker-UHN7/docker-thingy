@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { AppSnapshot, OperationEvent, PreloadApi, PullProgressEvent } from "./shared/contracts";
 import type { NetworkPreloadApi } from "./shared/network-contracts";
 import type { RemoteAccessPreloadApi } from "./shared/remote-access-contracts";
@@ -9,6 +9,7 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
   // allowlist (contextBridge, crashReporter, ipcRenderer, nativeImage,
   // webFrame, webUtils only) - has to go through the main process instead.
   copyToClipboard: (text) => ipcRenderer.invoke(IPC_CHANNELS.COPY_TO_CLIPBOARD, text),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   getSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SNAPSHOT),
   openSource: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SOURCE),
   createProject: () => ipcRenderer.invoke(IPC_CHANNELS.CREATE_PROJECT),
