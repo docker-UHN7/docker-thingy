@@ -1420,7 +1420,10 @@ export class ProjectService {
       }
       const { project, mainPath } = context;
 
-      if (fields.image !== undefined) {
+      // Empty is valid here - it means "leave whatever's there alone" (see
+      // applyServiceFieldEdits), which is the normal state for a build-based
+      // service that never had an `image:` key to begin with.
+      if (fields.image !== undefined && fields.image.trim() !== "") {
         const imageCheck = validateImageTag(fields.image);
         if (!imageCheck.ok) {
           return { ok: false, error: { code: "VALIDATION_FAILED", message: imageCheck.detail } };

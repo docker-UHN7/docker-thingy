@@ -144,6 +144,7 @@ export function ServiceFieldsPanel({ project, serviceName }: ServiceFieldsPanelP
           id="service-fields-image"
           className="settings-input"
           value={image}
+          placeholder="(built from a Dockerfile - no image tag)"
           onChange={(event) => setImage(event.target.value)}
         />
       </div>
@@ -279,7 +280,7 @@ export function ServiceFieldsPanel({ project, serviceName }: ServiceFieldsPanelP
         </div>
       ) : null}
 
-      <button className="button button--primary" onClick={() => void handleSave()} disabled={saving || !image.trim()}>
+      <button className="button button--primary" onClick={() => void handleSave()} disabled={saving}>
         {saving ? <LoaderCircle size={14} className="busy spin" /> : <Save size={14} />}
         <span>{justSaved ? "Saved" : "Save"}</span>
       </button>

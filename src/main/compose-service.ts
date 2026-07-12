@@ -961,7 +961,13 @@ export function applyServiceFieldEdits(
   const servicePath = ["services", serviceName];
 
   if (fields.image !== undefined) {
-    setScalarPreservingNode(document, [...servicePath, "image"], fields.image);
+    // A build-based service (build: ... instead of image: ...) legitimately
+    // has no image - readServiceFields reports that as "", and previously
+    // this unconditionally wrote it back as `image: ""`, corrupting the
+    // service. Empty means "leave it alone", same as every other field here.
+    if (fields.image.trim() !== "") {
+      setScalarPreservingNode(document, [...servicePath, "image"], fields.image);
+    }
   }
 
   if (fields.restart !== undefined) {
