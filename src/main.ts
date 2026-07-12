@@ -4,6 +4,7 @@ import { app, BrowserWindow, session } from "electron";
 import { ProjectService } from "./main/project-service";
 import { registerIpc } from "./main/ipc";
 import { disableRemoteAccess } from "./main/remote-access-service";
+import { disposeAllExecSessions } from "./main/exec-service";
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -98,6 +99,7 @@ app.whenReady().then(async () => {
 
   app.on("before-quit", () => {
     disableRemoteAccess();
+    disposeAllExecSessions();
     projectService.dispose();
   });
 

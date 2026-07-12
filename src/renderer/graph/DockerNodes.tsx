@@ -1,4 +1,6 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { Download, LoaderCircle, Upload } from "lucide-react";
+import { useState } from "react";
 import type { PortMapping, ServiceNodeModel } from "../../shared/contracts";
 
 type ServiceFlowNode = Node<ServiceNodeModel, "serviceNode">;
@@ -141,6 +143,39 @@ export function ServiceNode({ data }: NodeProps<ServiceFlowNode>) {
 }
 
 export function VolumeNode({ data }: NodeProps<VolumeFlowNode>) {
+  const [busy, setBusy] = useState<"backup" | "restore" | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  async function handleBackup() {
+    setBusy("backup");
+    setError(undefined);
+    try {
+      const result = await window.dockerExplorer.backupVolume(data.name);
+      if (!result.ok) {
+        setError(result.error.message);
+      }
+    } catch (thrown) {
+      setError(thrown instanceof Error ? thrown.message : "Backup failed.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function handleRestore() {
+    setBusy("restore");
+    setError(undefined);
+    try {
+      const result = await window.dockerExplorer.restoreVolume(data.name);
+      if (!result.ok) {
+        setError(result.error.message);
+      }
+    } catch (thrown) {
+      setError(thrown instanceof Error ? thrown.message : "Restore failed.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   return (
     <div className="volume-node">
       <Handle id="resource-out" type="source" position={Position.Left} className="graph-handle graph-handle--hidden" />
@@ -151,6 +186,39 @@ export function VolumeNode({ data }: NodeProps<VolumeFlowNode>) {
       <span className="volume-node__detail mono-micro" title={data.path}>
         {data.consumerCount && data.consumerCount > 1 ? `${data.consumerCount} services` : data.path}
       </span>
+      <div className="volume-node__actions">
+        <button
+          type="button"
+          className="icon-button"
+          title="Back up this volume to a file"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void handleBackup();
+          }}
+          disabled={busy !== undefined}
+        >
+          {busy === "backup" ? <LoaderCircle size={12} className="busy spin" /> : <Download size={12} />}
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          title="Restore this volume from a backup file"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void handleRestore();
+          }}
+          disabled={busy !== undefined}
+        >
+          {busy === "restore" ? <LoaderCircle size={12} className="busy spin" /> : <Upload size={12} />}
+        </button>
+      </div>
+      {error ? (
+        <span className="volume-node__detail volume-node__error mono-micro" title={error}>
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }

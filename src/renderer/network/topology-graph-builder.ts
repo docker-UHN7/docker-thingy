@@ -94,7 +94,15 @@ export async function layoutTopologyGraph(
       "elk.layered.spacing.nodeNodeBetweenLayers": "96",
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.spacing.edgeNode": "28",
-      "elk.spacing.edgeEdge": "16"
+      "elk.spacing.edgeEdge": "16",
+      // Each bridge (with its own containers/VMs and its own uplink) is
+      // usually a separate connected component - nothing here directly links
+      // e.g. docker0's subgraph to br-xxxx's. ELK's default packs disconnected
+      // components into separate side-by-side lanes, which interleaves them
+      // into a repeating "containers, bridges, uplinks, containers again,
+      // bridges again, ..." pattern instead of one clean column per node kind.
+      // Disabling this makes every component share the same layer columns.
+      "elk.separateConnectedComponents": "false"
     },
     children: nodes.map((node) => ({
       id: node.id,

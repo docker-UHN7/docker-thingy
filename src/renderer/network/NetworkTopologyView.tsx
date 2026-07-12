@@ -3,8 +3,8 @@ import "@xyflow/react/dist/style.css";
 import { ArrowLeft, LoaderCircle, MoonStar, RefreshCw, SunMedium, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Connection, Edge, EdgeMouseHandler, Node, OnReconnect } from "@xyflow/react";
-import type { NetworkActionVerb } from "../../shared/network-contracts";
-import { buildTopologyGraph, layoutTopologyGraph } from "./topology-graph-builder";
+import type { NetworkActionVerb, TopologyNode as TopologyNodeModel } from "../../shared/network-contracts";
+import { buildTopologyGraph, layoutTopologyGraph, type TopologyGraphEdgeData } from "./topology-graph-builder";
 import { TopologyNode, UplinkNode } from "./TopologyNodes";
 import { useNetworkStore } from "./networkStore";
 import { useConfirmDialog } from "./ConfirmDialog";
@@ -69,6 +69,30 @@ function resolveDeviceBridgeConnection(connection: Connection): DeviceBridgeConn
 
 const POLL_MS = 5000;
 
+// Structural identity only - deliberately excludes status/state so a
+// container starting/stopping or an edge toggling up/down (both of which the
+// 5s poll picks up constantly) doesn't look like a topology change. Mirrors
+// GraphView.tsx's topologySignature, which exists for the same reason: without
+// it, every poll tick would re-run ELK and refit the view, wiping out
+// whatever the user was looking at.
+function topologySignature(nodes: Node<TopologyNodeModel>[], edges: Edge<TopologyGraphEdgeData>[]): string {
+  return JSON.stringify({
+    nodes: nodes.map((node) => [node.id, node.type]),
+    edges: edges.map((edge) => [edge.id, edge.source, edge.target, edge.data?.kind])
+  });
+}
+
+function refreshNodesWithoutRelayout(
+  nextNodes: Node<TopologyNodeModel>[],
+  currentNodes: Node<TopologyNodeModel>[]
+): Node<TopologyNodeModel>[] {
+  const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+  return nextNodes.map((node) => {
+    const current = currentById.get(node.id);
+    return current ? { ...node, position: current.position } : node;
+  });
+}
+
 type NetworkTopologyViewProps = {
   theme: "dark" | "light";
   onBack(): void;
@@ -84,10 +108,30 @@ export function NetworkTopologyView({ theme, onBack, onToggleTheme }: NetworkTop
   const runAction = useNetworkStore((state) => state.runAction);
   const { confirm, dialog } = useConfirmDialog();
 
-  const [rawNodes, setRawNodes] = useState<Node[]>([]);
-  const [rawEdges, setRawEdges] = useState<Edge[]>([]);
-  const flowRef = useRef<ReactFlowInstance | null>(null);
+  const [rawNodes, setRawNodes] = useState<Node<TopologyNodeModel>[]>([]);
+  const [rawEdges, setRawEdges] = useState<Edge<TopologyGraphEdgeData>[]>([]);
+  const [hintMessage, setHintMessage] = useState<string | null>(null);
+  const flowRef = useRef<ReactFlowInstance<Node<TopologyNodeModel>, Edge<TopologyGraphEdgeData>> | null>(null);
   const fitFrameRef = useRef<number | null>(null);
+  const lastSignatureRef = useRef<string | null>(null);
+  const hintTimeoutRef = useRef<number | null>(null);
+
+  const showHint = useCallback((message: string) => {
+    setHintMessage(message);
+    if (hintTimeoutRef.current !== null) {
+      window.clearTimeout(hintTimeoutRef.current);
+    }
+    hintTimeoutRef.current = window.setTimeout(() => setHintMessage(null), 3200);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (hintTimeoutRef.current !== null) {
+        window.clearTimeout(hintTimeoutRef.current);
+      }
+    },
+    []
+  );
 
   const scheduleFitView = useCallback(() => {
     if (!flowRef.current) {
@@ -116,8 +160,22 @@ export function NetworkTopologyView({ theme, onBack, onToggleTheme }: NetworkTop
       return;
     }
 
-    let cancelled = false;
     const initial = buildTopologyGraph(topology);
+    const nextSignature = topologySignature(initial.nodes, initial.edges);
+    const isFirstLoad = lastSignatureRef.current === null;
+    const structureChanged = isFirstLoad || lastSignatureRef.current !== nextSignature;
+    lastSignatureRef.current = nextSignature;
+
+    if (!structureChanged) {
+      // Same containers/VMs/bridges/edges as last time - just refresh their
+      // data (status, edge up/down state) in place. No relayout, no refit:
+      // that's what was resetting the user's pan/zoom on every 5s poll tick.
+      setRawNodes((current) => refreshNodesWithoutRelayout(initial.nodes, current));
+      setRawEdges(initial.edges);
+      return;
+    }
+
+    let cancelled = false;
     setRawNodes(initial.nodes);
     setRawEdges(initial.edges);
     scheduleFitView();
@@ -157,7 +215,17 @@ export function NetworkTopologyView({ theme, onBack, onToggleTheme }: NetworkTop
       }
 
       const model = topology.edges.find((entry) => entry.id === edge.id);
-      if (!model || !model.controllable) {
+      if (!model) {
+        return;
+      }
+      if (!model.controllable) {
+        // Currently the only reason an attachment edge isn't controllable:
+        // the device is powered off, so there's no live interface/PID to
+        // target (see topology-service.ts). Say so instead of doing nothing.
+        if (model.kind === "attachment") {
+          const fromNode = topology.nodes.find((node) => node.id === model.from);
+          showHint(`${fromNode?.name ?? "This device"} is powered off - cannot interact with its network link.`);
+        }
         return;
       }
       // Reattach/connect verbs are never populated on a discovered edge
@@ -182,7 +250,7 @@ export function NetworkTopologyView({ theme, onBack, onToggleTheme }: NetworkTop
 
       void runAction(model.id, { verb: model.verb, targetId: model.actionTargetId, state: nextState });
     },
-    [topology, pendingEdgeId, runAction, confirm]
+    [topology, pendingEdgeId, runAction, confirm, showHint]
   );
 
   // Dragging an attachment edge's bridge end onto a *different* bridge moves
@@ -352,6 +420,15 @@ export function NetworkTopologyView({ theme, onBack, onToggleTheme }: NetworkTop
         <div className="error-banner error-banner--inline">
           <TriangleAlert size={16} />
           <span>{error}</span>
+        </div>
+      ) : null}
+
+      {hintMessage ? (
+        <div className="daemon-banner">
+          <div className="daemon-banner__copy">
+            <span className="status-dot status-dot--warning" />
+            <span>{hintMessage}</span>
+          </div>
         </div>
       ) : null}
 

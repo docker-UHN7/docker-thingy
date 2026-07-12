@@ -4,13 +4,17 @@ import type {
   AddServiceInput,
   AddServiceResult,
   AppSnapshot,
+  BackupVolumeResult,
   CancelActionResult,
+  CheckImageUpdateResult,
+  ConfigDriftResult,
   GetServiceFieldsResult,
   OpenSourceResult,
   ProjectActionResult,
   PullImageResult,
   ReadSourceFileResult,
   RemoveServiceResult,
+  RestoreVolumeResult,
   SaveSourceFileResult,
   SearchDockerHubResult,
   ServiceFieldsInput,
@@ -27,6 +31,9 @@ import { searchDockerHub } from "./docker-hub-service";
 import { pullImage } from "./docker-pull-service";
 import { getNetworkTopology } from "./topology-service";
 import { runNetworkAction } from "./network-control-service";
+import { startContainerExec, stopContainerExec, writeToContainerExec } from "./exec-service";
+import { checkImageUpdate } from "./image-update-service";
+import { backupVolume, restoreVolume } from "./volume-backup-service";
 import {
   disableRemoteAccess,
   enableRemoteAccess,
@@ -476,6 +483,96 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
     }
 
     clipboard.writeText(text);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.EXEC_START, async (event, containerId: unknown): Promise<string> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+    if (typeof containerId !== "string") {
+      throw new Error("Invalid container id.");
+    }
+
+    return startContainerExec(
+      containerId,
+      (output) => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.EXEC_OUTPUT_EVENT, output);
+        }
+      },
+      (exit) => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.EXEC_EXIT_EVENT, exit);
+        }
+      }
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.EXEC_WRITE, async (event, sessionId: unknown, data: unknown): Promise<void> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+    if (typeof sessionId !== "string" || typeof data !== "string") {
+      throw new Error("Invalid exec write request.");
+    }
+
+    writeToContainerExec(sessionId, data);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.EXEC_STOP, async (event, sessionId: unknown): Promise<void> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+    if (typeof sessionId !== "string") {
+      throw new Error("Invalid session id.");
+    }
+
+    stopContainerExec(sessionId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_CONFIG_DRIFT, async (event, projectId: unknown): Promise<ConfigDriftResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+    if (typeof projectId !== "string") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid project id." } };
+    }
+
+    return projectService.getConfigDrift(projectId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CHECK_IMAGE_UPDATE, async (event, image: unknown): Promise<CheckImageUpdateResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+    if (typeof image !== "string" || image.trim() === "") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid image reference." } };
+    }
+
+    const info = await checkImageUpdate(image);
+    return { ok: true, data: { info } };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.BACKUP_VOLUME, async (event, volumeName: unknown): Promise<BackupVolumeResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+    if (typeof volumeName !== "string") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid volume name." } };
+    }
+
+    return backupVolume(volumeName);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RESTORE_VOLUME, async (event, volumeName: unknown): Promise<RestoreVolumeResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+    if (typeof volumeName !== "string") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid volume name." } };
+    }
+
+    return restoreVolume(volumeName);
   });
 }
 
