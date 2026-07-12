@@ -12,13 +12,6 @@ const SAMPLE_OPTIONS: Array<number | null> = [3, 5, 10, null];
 export function ConfigurationPanel({ settings, onUpdate, onClearRecents }: ConfigurationPanelProps) {
   return (
     <section className="settings-stack">
-      <div className="card__header">
-        <div>
-          <p className="eyebrow">Settings</p>
-          <h3 className="panel-title">Workspace controls</h3>
-        </div>
-      </div>
-
       <div className="settings-field">
         <label className="eyebrow" htmlFor="theme-mode">
           Theme

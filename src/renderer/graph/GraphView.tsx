@@ -2,16 +2,18 @@ import {
   Controls,
   ReactFlow,
   applyNodeChanges,
+  type FitViewOptions,
   type Edge,
   type EdgeChange,
   type Node,
   type NodeChange,
+  type OnNodeDrag,
   type ReactFlowInstance
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ProjectSummary } from "../../shared/contracts";
-import { buildGraph, layoutGraph, resolveMeasuredLayout, type GraphEdgeData, type GraphNodeData } from "./graph-builder";
+import { layoutGraph, resolveMeasuredLayout, type GraphEdgeData, type GraphNodeData } from "./graph-builder";
 import { ExternalNode, ServiceNode, VolumeNode } from "./DockerNodes";
 import { StraightLabeledEdge } from "./StraightLabeledEdge";
 
@@ -36,6 +38,56 @@ type GraphViewProps = {
 
 type FlowNode = Node<GraphNodeData>;
 type FlowEdge = Edge<GraphEdgeData>;
+const INITIAL_FIT_OPTIONS: FitViewOptions<FlowNode> = { padding: 0.18, duration: 220 };
+
+type StoredPosition = { x: number; y: number };
+
+function mergeNodesPreservingPositions(
+  nextNodes: FlowNode[],
+  currentNodes: FlowNode[],
+  storedPositions: Map<string, StoredPosition>
+): FlowNode[] {
+  return nextNodes.map((node) => {
+    const stored = storedPositions.get(node.id);
+    if (stored) {
+      return { ...node, position: stored };
+    }
+
+    const existing = currentNodes.find((entry) => entry.id === node.id);
+    return existing ? { ...node, position: existing.position } : node;
+  });
+}
+
+function refreshNodesWithoutRelayout(
+  nextNodes: FlowNode[],
+  currentNodes: FlowNode[],
+  storedPositions: Map<string, StoredPosition>
+): FlowNode[] {
+  const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+
+  return nextNodes.map((node) => {
+    const current = currentById.get(node.id);
+    const stored = storedPositions.get(node.id);
+    const position = stored ?? current?.position ?? node.position;
+
+    if (!current) {
+      return { ...node, position };
+    }
+
+    return {
+      ...current,
+      ...node,
+      position
+    };
+  });
+}
+
+function topologySignature(nodes: FlowNode[], edges: FlowEdge[]): string {
+  return JSON.stringify({
+    nodes: nodes.map((node) => [node.id, node.type]),
+    edges: edges.map((edge) => [edge.id, edge.source, edge.target, edge.data?.kind, edge.data?.label ?? ""])
+  });
+}
 
 function relatedNodes(project: ProjectSummary, selectedNodeId: string | undefined): Set<string> | undefined {
   if (!selectedNodeId) {
@@ -80,7 +132,15 @@ export function GraphView({
   const [rawEdges, setRawEdges] = useState<FlowEdge[]>(() => initialGraph.edges);
   const [layoutRevision, setLayoutRevision] = useState(0);
   const flowRef = useRef<ReactFlowInstance<FlowNode, FlowEdge> | null>(null);
+  const initialFitFrameRef = useRef<number | null>(null);
   const measureFrameRef = useRef<number | null>(null);
+  const rawNodesRef = useRef<FlowNode[]>(rawNodes);
+  const rawEdgesRef = useRef<FlowEdge[]>(rawEdges);
+  const storedPositionsRef = useRef<Map<string, StoredPosition>>(new Map());
+  const pendingInitialFitRef = useRef(true);
+  const fittedProjectIdRef = useRef<string | undefined>(undefined);
+  const [flowReadyRevision, setFlowReadyRevision] = useState(0);
+  const [measuredRevision, setMeasuredRevision] = useState(0);
 
   const structureKey = useMemo(
     () =>
@@ -88,39 +148,78 @@ export function GraphView({
         services: project.services.map((service) => ({
           id: service.id,
           name: service.name,
-          image: service.image,
-          ports: service.portMappings.map((port) => [port.id, port.label, port.state, port.hostPort, port.hostIp]),
           dependencies: service.dependencies,
           networks: service.categories.networks,
-          volumes: service.categories.volumes,
-          sourceHints: service.sourceHints
+          volumes: service.categories.volumes
         })),
-        externalNodes: project.externalNodes,
         relationshipEdges: project.relationshipEdges
       }),
     [project]
   );
 
   useEffect(() => {
-    const nextGraph = buildGraph(project);
-    setRawNodes((current) =>
-      nextGraph.nodes.map((node) => {
-        const existing = current.find((entry) => entry.id === node.id);
-        return existing ? { ...node, position: existing.position } : node;
-      })
-    );
-    setRawEdges(nextGraph.edges);
-  }, [project]);
+    rawNodesRef.current = rawNodes;
+  }, [rawNodes]);
+
+  useEffect(() => {
+    rawEdgesRef.current = rawEdges;
+  }, [rawEdges]);
+
+  useEffect(() => {
+    if (fittedProjectIdRef.current !== project.id) {
+      pendingInitialFitRef.current = true;
+      fittedProjectIdRef.current = project.id;
+      storedPositionsRef.current = new Map();
+      setMeasuredRevision(0);
+    }
+  }, [project.id]);
 
   useEffect(() => {
     const graph = layoutGraph(project);
-    setRawNodes(graph.nodes);
+    const nextTopology = topologySignature(graph.nodes, graph.edges);
+    const currentTopology = topologySignature(rawNodesRef.current, rawEdgesRef.current);
+    const topologyChanged = nextTopology !== currentTopology;
+
+    setRawNodes((current) =>
+      topologyChanged
+        ? mergeNodesPreservingPositions(graph.nodes, current, storedPositionsRef.current)
+        : refreshNodesWithoutRelayout(graph.nodes, current, storedPositionsRef.current)
+    );
     setRawEdges(graph.edges);
-    setLayoutRevision((current) => current + 1);
-  }, [structureKey]);
+
+    if (topologyChanged) {
+      setLayoutRevision((current) => current + 1);
+    }
+  }, [project, structureKey]);
+
+  useEffect(() => {
+    if (!flowRef.current || !pendingInitialFitRef.current || rawNodes.length === 0 || measuredRevision === 0) {
+      return;
+    }
+
+    if (initialFitFrameRef.current !== null) {
+      cancelAnimationFrame(initialFitFrameRef.current);
+    }
+
+    initialFitFrameRef.current = requestAnimationFrame(() => {
+      initialFitFrameRef.current = requestAnimationFrame(() => {
+        if (!flowRef.current || !pendingInitialFitRef.current) {
+          return;
+        }
+
+        pendingInitialFitRef.current = false;
+        void flowRef.current.fitView(INITIAL_FIT_OPTIONS);
+      });
+    });
+  }, [project.id, rawNodes.length, flowReadyRevision, layoutRevision, measuredRevision]);
 
   useEffect(() => {
     if (!flowRef.current || rawNodes.length === 0) {
+      return;
+    }
+
+    const hasStoredManualPositions = storedPositionsRef.current.size > 0;
+    if (hasStoredManualPositions && !pendingInitialFitRef.current) {
       return;
     }
 
@@ -148,6 +247,8 @@ export function GraphView({
           return;
         }
 
+        setMeasuredRevision((current) => current + 1);
+
         setRawNodes((current) => {
           const next = resolveMeasuredLayout(current, rawEdges, measuredNodes);
           const changed = next.some((node, index) => {
@@ -159,7 +260,7 @@ export function GraphView({
         });
       });
     });
-  }, [layoutRevision, rawEdges, rawNodes.length]);
+  }, [layoutRevision, rawEdges, rawNodes.length, flowReadyRevision]);
   const related = useMemo(() => relatedNodes(project, selectedNodeId), [project, selectedNodeId]);
 
   const nodes = useMemo<FlowNode[]>(() => {
@@ -202,6 +303,9 @@ export function GraphView({
 
   useEffect(
     () => () => {
+      if (initialFitFrameRef.current !== null) {
+        cancelAnimationFrame(initialFitFrameRef.current);
+      }
       if (measureFrameRef.current !== null) {
         cancelAnimationFrame(measureFrameRef.current);
       }
@@ -210,11 +314,23 @@ export function GraphView({
   );
 
   const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
+    for (const change of changes) {
+      if (change.type !== "position" || !change.position) {
+        continue;
+      }
+
+      storedPositionsRef.current.set(change.id, change.position);
+    }
+
     setRawNodes((current) => applyNodeChanges(changes, current));
   }, []);
 
   const onEdgesChange = useCallback((_changes: EdgeChange<FlowEdge>[]) => {
     // Graph edges are structural, not user-editable.
+  }, []);
+
+  const onNodeDragStop = useCallback<OnNodeDrag<FlowNode>>((_event, node) => {
+    storedPositionsRef.current.set(node.id, { ...node.position });
   }, []);
 
   return (
@@ -232,6 +348,7 @@ export function GraphView({
         nodesDraggable
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeDragStop={onNodeDragStop}
         onPaneClick={() => onClearSelection()}
         onNodeClick={(_event, node) => {
           if (node.type === "serviceNode") {
@@ -240,10 +357,11 @@ export function GraphView({
         }}
         onInit={(instance) => {
           flowRef.current = instance;
+          setFlowReadyRevision((current) => current + 1);
         }}
       >
         {children}
-        <Controls showInteractive={false} showFitView fitViewOptions={{ padding: 0.18, duration: 220 }} />
+        <Controls showInteractive={false} showFitView fitViewOptions={INITIAL_FIT_OPTIONS} />
       </ReactFlow>
     </div>
   );

@@ -4,6 +4,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  Copy,
   FileCode2,
   Layers,
   LoaderCircle,
@@ -112,11 +113,7 @@ export function ProjectWorkspace({
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-<<<<<<< HEAD
-=======
   const [addServiceOpen, setAddServiceOpen] = useState(false);
-  const [dismissedValidationOperationId, setDismissedValidationOperationId] = useState<string | undefined>();
->>>>>>> 1c94fb6bcbf1022f3cc655568ba81614264c0143
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
   // Toggling a compose-file checkbox round-trips through main (reload +
@@ -429,6 +426,7 @@ export function ProjectWorkspace({
 
       <section className="workspace-canvas">
         <GraphView
+          key={project.id}
           project={project}
           filterQuery={deferredQuery}
           selectedNodeId={selectedNodeId}
@@ -439,7 +437,12 @@ export function ProjectWorkspace({
             setEditorOpen(false);
             setAddServiceOpen(false);
           }}
-          onClearSelection={() => setSelectedNodeId(undefined)}
+          onClearSelection={() => {
+            setSelectedNodeId(undefined);
+            setSettingsOpen(false);
+            setEditorOpen(false);
+            setAddServiceOpen(false);
+          }}
         >
           <Panel position="top-left" style={{ margin: 16 }}>
             <div className="floating-panel workspace-panel workspace-panel--project">
@@ -448,9 +451,12 @@ export function ProjectWorkspace({
                   <button className="icon-button" onClick={onBack} aria-label="Back to projects">
                     <ArrowLeft size={16} />
                   </button>
-                  <div className="workspace-project-card__title-block">
-                    <h2 className="toolbar-project__title">{project.title}</h2>
-                    <div className="live-indicator">
+                  <div className="workspace-project-card__summary">
+                    <div className="workspace-project-card__title-block">
+                      <h2 className="toolbar-project__title">{project.title}</h2>
+                      <span className="metadata-note">Context: {project.contextName}</span>
+                    </div>
+                    <div className="live-indicator workspace-project-card__status">
                       <span
                         className={`status-dot status-dot--${runtimeIndicatorClass} ${
                           lifecycle.state === "running" ? "pulse" : ""
@@ -459,10 +465,6 @@ export function ProjectWorkspace({
                       <span className="metadata-note">{runtimeStateLabel}</span>
                     </div>
                   </div>
-                </div>
-
-                <div className="workspace-project-card__meta">
-                  <span className="metadata-note">{project.contextName}</span>
                 </div>
 
                 {siblingProjects.length > 1 ? (
@@ -602,20 +604,6 @@ export function ProjectWorkspace({
               <div className="workspace-toolbar__divider" />
 
               <div className="workspace-toolbar__cluster">
-<<<<<<< HEAD
-=======
-                <button
-                  className="button button--secondary"
-                  onClick={() => setLayoutDirection((current) => (current === "RIGHT" ? "DOWN" : "RIGHT"))}
-                >
-                  <LayoutPanelTop size={16} />
-                  <span>{layoutDirection === "RIGHT" ? "Left to right" : "Top to bottom"}</span>
-                </button>
-              </div>
-
-              <div className="workspace-toolbar__divider" />
-
-              <div className="workspace-toolbar__cluster">
                 {canAddService ? (
                   <button
                     className="button button--secondary"
@@ -631,7 +619,6 @@ export function ProjectWorkspace({
                     <span>Add service</span>
                   </button>
                 ) : null}
->>>>>>> 1c94fb6bcbf1022f3cc655568ba81614264c0143
                 {canEditSource ? (
                   <button
                     className="icon-button"
@@ -773,8 +760,13 @@ export function ProjectWorkspace({
                                 {entry.masked ? "........" : entry.value}
                               </span>
                             </div>
-                            <button className="button button--secondary" onClick={() => void navigator.clipboard.writeText(entry.value)}>
-                              Copy
+                            <button
+                              className="icon-button"
+                              onClick={() => void navigator.clipboard.writeText(entry.value)}
+                              aria-label={`Copy value for ${entry.key}`}
+                              title="Copy value"
+                            >
+                              <Copy size={14} />
                             </button>
                           </div>
                         ))

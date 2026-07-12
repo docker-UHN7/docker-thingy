@@ -54,6 +54,6 @@ describe("buildGraph", () => {
 
     const graph = buildGraph(project);
     expect(graph.nodes).toHaveLength(2);
-    expect(graph.edges[0]).toMatchObject({ source: "service:web", target: "service:api" });
+    expect(graph.edges[0]).toMatchObject({ source: "service:api", target: "service:web" });
   });
 });

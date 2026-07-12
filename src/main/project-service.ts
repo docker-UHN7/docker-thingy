@@ -109,6 +109,22 @@ export function mergeProjectLists(
   return [...mergedSourceProjects, ...remainingRuntimeProjects];
 }
 
+async function filterExistingRecentSources(paths: string[]): Promise<string[]> {
+  const unique = paths.filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index).slice(0, 24);
+  const checks = await Promise.all(
+    unique.map(async (path) => {
+      try {
+        await access(path);
+        return path;
+      } catch {
+        return undefined;
+      }
+    })
+  );
+
+  return checks.filter((entry): entry is string => Boolean(entry)).slice(0, 12);
+}
+
 interface ComposeProjectGroup {
   mainFile: string;
   relatedFiles: string[];
@@ -538,14 +554,7 @@ export class ProjectService {
         // `docker compose ls`'s ConfigFiles column, most of which were never
         // opened successfully - surfacing those in "recents" would offer the
         // user broken links.
-        const derivedRecents = [
-          ...this.snapshot.recents,
-          ...sourceProjects.map((project) => project.sourcePath).filter((entry): entry is string => Boolean(entry)),
-          ...runtimeProjects.map((project) => project.sourcePath).filter((entry): entry is string => Boolean(entry))
-        ]
-          .filter(Boolean)
-          .filter((entry, index, all) => all.indexOf(entry) === index)
-          .slice(0, 12);
+        const derivedRecents = await filterExistingRecentSources(this.snapshot.recents);
 
         this.snapshot = {
           ...this.snapshot,

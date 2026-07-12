@@ -109,6 +109,30 @@ function isPathLike(value: string): boolean {
   return /[\\/]/.test(value) || /^[A-Za-z]:/.test(value) || value.startsWith(".") || value.startsWith("~");
 }
 
+function canonicalVolumeName(rawName: string, service: ServiceNodeModel, composeProjectName?: string): string {
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return rawName;
+  }
+
+  const candidates = service.categories.volumes.filter((entry) => entry && !isPathLike(normalizeHostPath(entry)));
+  if (candidates.includes(trimmed)) {
+    return trimmed;
+  }
+
+  if (composeProjectName) {
+    const prefixed = `${composeProjectName}_`;
+    if (trimmed.startsWith(prefixed)) {
+      const logicalName = trimmed.slice(prefixed.length);
+      if (candidates.includes(logicalName)) {
+        return logicalName;
+      }
+    }
+  }
+
+  return trimmed;
+}
+
 function nodeWidth(type: Node["type"]): number {
   return type === "serviceNode" ? SERVICE_NODE_WIDTH : COMPACT_NODE_WIDTH;
 }
@@ -305,6 +329,7 @@ function serviceDependencyRanks(services: ServiceNodeModel[], dependencyEdges: D
 function collectVolumeResources(project: ProjectSummary): VolumeResource[] {
   const resources = new Map<string, VolumeResource>();
   const servicesByName = new Map(project.services.map((service) => [service.name, service]));
+  const composeProjectName = project.composeProjectName;
 
   for (const service of [...project.services].sort((left, right) => left.name.localeCompare(right.name))) {
     const runtimeMounts = service.details?.mounts ?? [];
@@ -314,18 +339,19 @@ function collectVolumeResources(project: ProjectSummary): VolumeResource[] {
         continue;
       }
 
-      const id = `volume:${mount.name}`;
+      const volumeName = canonicalVolumeName(mount.name, service, composeProjectName);
+      const id = `volume:${volumeName}`;
       const existing = resources.get(id) ?? {
         id,
-        name: mount.name,
-        path: mount.name,
+        name: volumeName,
+        path: volumeName,
         consumerIds: [],
         targetPaths: new Map<string, string>()
       };
       if (!existing.consumerIds.includes(service.id)) {
         existing.consumerIds.push(service.id);
       }
-      existing.targetPaths.set(service.id, mountLabel(mount, mount.name));
+      existing.targetPaths.set(service.id, mountLabel(mount, volumeName));
       resources.set(id, existing);
     }
   }
@@ -340,7 +366,7 @@ function collectVolumeResources(project: ProjectSummary): VolumeResource[] {
       continue;
     }
 
-    const sourceName = relationship.from;
+    const sourceName = canonicalVolumeName(relationship.from, targetService, composeProjectName);
     if (!sourceName || isPathLike(normalizeHostPath(sourceName))) {
       continue;
     }
@@ -357,7 +383,9 @@ function collectVolumeResources(project: ProjectSummary): VolumeResource[] {
       existing.consumerIds.push(targetService.id);
     }
 
-    const matchingMount = targetService.details?.mounts.find((mount) => mount.name === sourceName);
+    const matchingMount = targetService.details?.mounts.find(
+      (mount) => mount.name && canonicalVolumeName(mount.name, targetService, composeProjectName) === sourceName
+    );
     existing.targetPaths.set(targetService.id, mountLabel(matchingMount, relationship.label ?? sourceName));
     resources.set(id, existing);
   }
