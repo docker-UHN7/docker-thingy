@@ -54,6 +54,8 @@ describe("buildGraph", () => {
 
     const graph = buildGraph(project);
     expect(graph.nodes).toHaveLength(2);
-    expect(graph.edges[0]).toMatchObject({ source: "service:web", target: "service:api" });
+    // Dependency edges point from provider to consumer (api -> web), the
+    // opposite of depends_on's "web depends on api" reading.
+    expect(graph.edges[0]).toMatchObject({ source: "service:api", target: "service:web" });
   });
 });

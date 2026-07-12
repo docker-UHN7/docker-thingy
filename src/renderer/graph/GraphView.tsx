@@ -260,13 +260,16 @@ export function GraphView({
           const kind = (edge.data as GraphEdgeData | undefined)?.kind;
 
           if (kind === "dependency") {
-            const fromService = project.services.find((service) => service.id === edge.source)?.name;
+            // Dependency edges point provider -> consumer (see graph-builder.ts),
+            // the opposite of depends_on's "consumer depends on provider"
+            // reading, so the service being edited is the *target*.
+            const fromService = project.services.find((service) => service.id === edge.target)?.name;
             if (!fromService) {
               return;
             }
             const toService =
-              project.services.find((service) => service.id === edge.target)?.name ??
-              edge.target.replace(/^external-service:/, "");
+              project.services.find((service) => service.id === edge.source)?.name ??
+              edge.source.replace(/^external-service:/, "");
             onDisconnectEdge({ kind: "dependency", fromService, toService });
             return;
           }
