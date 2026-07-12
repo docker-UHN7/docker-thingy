@@ -11,16 +11,17 @@ import { rendererConfig } from "./webpack.renderer.config";
 
 const config: ForgeConfig = {
   packagerConfig: {
-    icon: "./build/icon"
+    icon: "resources/icons/favicon",
+    extraResource: ["resources/icons"]
   },
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({
-      setupIcon: "./build/icon.ico"
+      setupIcon: "resources/icons/favicon.ico"
     }),
     new MakerZIP({}, ["darwin"]),
-    new MakerRpm({}),
-    new MakerDeb({})
+    new MakerRpm({ options: { icon: "resources/icons/icon-512.png" } }),
+    new MakerDeb({ options: { icon: "resources/icons/icon-512.png" } })
   ],
   plugins: [
     new WebpackPlugin({

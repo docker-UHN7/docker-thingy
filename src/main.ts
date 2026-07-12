@@ -1,6 +1,6 @@
-import { app, BrowserWindow, session } from "electron";
+import path from "node:path";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { app, BrowserWindow, session } from "electron";
 import { ProjectService } from "./main/project-service";
 import { registerIpc } from "./main/ipc";
 import { disableRemoteAccess } from "./main/remote-access-service";
@@ -17,7 +17,9 @@ function resolveWindowIcon(): string | undefined {
     return undefined;
   }
 
-  const candidate = join(app.getAppPath(), "build", "icon.ico");
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, "icons", "icon-512.png")
+    : path.join(app.getAppPath(), "resources", "icons", "icon-512.png");
   return existsSync(candidate) ? candidate : undefined;
 }
 
