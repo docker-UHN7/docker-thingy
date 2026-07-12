@@ -1133,6 +1133,11 @@ button {
   justify-self: center;
 }
 
+.empty-dropzone__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .hero-card {
   display: grid;
   gap: var(--space-4);
@@ -1233,12 +1238,12 @@ button {
 }
 
 .detail-tabs {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
   gap: var(--space-1);
 }
 
 .detail-tab {
+  flex: 1;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   padding: var(--space-2);
@@ -1375,6 +1380,35 @@ button {
 
 .catalog-back {
   justify-self: start;
+}
+
+.service-fields {
+  min-width: 0;
+}
+
+.service-fields__list {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.service-fields__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.service-fields__row .settings-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.service-fields__env-inputs {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
 }
 
 .detail-list__row--column {
@@ -1555,10 +1589,21 @@ button {
   height: 24px;
 }
 
+.operation-progress__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .validate-toast__header {
   font-size: var(--text-body);
   line-height: 20px;
   color: var(--text-primary);
+}
+
+.operation-progress__cancel {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
 }
 
 .validate-toast__details {

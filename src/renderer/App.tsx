@@ -12,6 +12,7 @@ export function App() {
   const recentLoadingPath = useAppStore((state) => state.recentLoadingPath);
   const bootstrap = useAppStore((state) => state.bootstrap);
   const openSource = useAppStore((state) => state.openSource);
+  const createProject = useAppStore((state) => state.createProject);
   const openSourcePath = useAppStore((state) => state.openSourcePath);
   const openRecentSource = useAppStore((state) => state.openRecentSource);
   const selectProject = useAppStore((state) => state.selectProject);
@@ -43,6 +44,12 @@ export function App() {
           }}
           onOpenSource={async () => {
             const success = await openSource();
+            if (success && useAppStore.getState().selectedProjectId) {
+              setScreen("workspace");
+            }
+          }}
+          onCreateProject={async () => {
+            const success = await createProject();
             if (success && useAppStore.getState().selectedProjectId) {
               setScreen("workspace");
             }

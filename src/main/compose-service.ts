@@ -11,6 +11,8 @@ import type {
   ProjectDiagnostics,
   ProjectSummary,
   RelationshipEdge,
+  ServiceFields,
+  ServiceFieldsInput,
   ServiceNodeModel
 } from "../shared/contracts";
 
@@ -799,6 +801,30 @@ function isVolumeReferencedByAnyService(document: Document, volumeName: string):
   });
 }
 
+// Deletes a top-level named volume once nothing references it anymore,
+// including removing the whole `volumes:` key if that was the last entry -
+// leaving `volumes: {}` behind reads as "still has a volume" at a glance.
+// `volumeName` isn't guaranteed to actually have a top-level declaration -
+// plenty of hand-written compose files reference a named volume from a
+// service without declaring it under `volumes:` at all - so this has to
+// check the node is really a map before touching it; `deleteIn` throws
+// rather than no-op-ing when a path segment isn't a collection.
+function pruneVolumeIfOrphaned(document: Document, volumeName: string): void {
+  if (isVolumeReferencedByAnyService(document, volumeName)) {
+    return;
+  }
+
+  const volumesNode = document.get("volumes", true);
+  if (!isMap(volumesNode)) {
+    return;
+  }
+
+  document.deleteIn(["volumes", volumeName]);
+  if (volumesNode.items.length === 0) {
+    document.deleteIn(["volumes"]);
+  }
+}
+
 // Removes a service (e.g. from the "Add service" catalog, or hand-written)
 // from the compose file: deletes its own block, strips it out of every other
 // service's depends_on, and drops any top-level named volume that only this
@@ -833,13 +859,173 @@ export function removeServiceFromCompose(
   }
 
   for (const volumeName of ownVolumeNames) {
-    if (!isVolumeReferencedByAnyService(document, volumeName)) {
-      document.deleteIn(["volumes", volumeName]);
-    }
+    pruneVolumeIfOrphaned(document, volumeName);
   }
 
   return {
     sourceText: String(document),
     diffPreview: `- services.${serviceName}`
   };
+}
+
+function scalarText(value: unknown): string {
+  if (isScalar(value)) {
+    return value.value === null || value.value === undefined ? "" : String(value.value);
+  }
+  return value === null || value === undefined ? "" : String(value);
+}
+
+// Reads a service's raw, editable fields straight out of the compose YAML -
+// deliberately not sourced from ServiceNodeModel, which is a merged,
+// display-formatted projection (ports become "host -> container/tcp"
+// labels, volumes lose their mount path) unsuitable for round-tripping back
+// into a form. Only simple string ports/volumes are surfaced; long-form
+// (mapping) port/volume entries are left out of the editable list since
+// there's no lossless flat-string representation for them - they're still
+// visible/editable via the raw YAML editor.
+export function readServiceFields(sourceText: string, serviceName: string): ServiceFields | undefined {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  const servicesNode = document.get("services", true);
+  const serviceNode = isMap(servicesNode) ? servicesNode.get(serviceName, true) : undefined;
+
+  if (!isMap(serviceNode)) {
+    return undefined;
+  }
+
+  const ports = toPlainArray(serviceNode.get("ports", true)).filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+  const volumes = toPlainArray(serviceNode.get("volumes", true)).filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+
+  const dependsOnNode = serviceNode.get("depends_on", true);
+  const dependsOn = isMap(dependsOnNode)
+    ? dependsOnNode.items.map((item) => String(item.key))
+    : toPlainArray(dependsOnNode).map((entry) => String(entry));
+
+  const environment: Record<string, string> = {};
+  const envNode = serviceNode.get("environment", true);
+  if (isMap(envNode)) {
+    for (const item of envNode.items) {
+      environment[String(item.key)] = scalarText(item.value);
+    }
+  } else {
+    for (const entry of toPlainArray(envNode)) {
+      const text = String(entry);
+      const separatorIndex = text.indexOf("=");
+      if (separatorIndex === -1) {
+        environment[text] = "";
+      } else {
+        environment[text.slice(0, separatorIndex)] = text.slice(separatorIndex + 1);
+      }
+    }
+  }
+
+  return {
+    image: scalarText(serviceNode.get("image", true)),
+    restart: scalarText(serviceNode.get("restart", true)),
+    ports,
+    volumes,
+    dependsOn,
+    environment
+  };
+}
+
+// Applies a set of graphical field edits from the side panel to a service.
+// Every field present in `fields` is fully replaced (not merged) - this is
+// a form editor, not the smarter list/map-preserving merges addServiceToCompose
+// uses for "connect to" wiring. A field is deleted from the YAML entirely
+// once its edited value is empty, rather than being written as `[]`/`{}`.
+export function applyServiceFieldEdits(
+  sourceText: string,
+  serviceName: string,
+  fields: ServiceFieldsInput
+): { sourceText: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  const servicePath = ["services", serviceName];
+
+  if (fields.image !== undefined) {
+    setScalarPreservingNode(document, [...servicePath, "image"], fields.image);
+  }
+
+  if (fields.restart !== undefined) {
+    if (fields.restart.trim() === "") {
+      document.deleteIn([...servicePath, "restart"]);
+    } else {
+      setScalarPreservingNode(document, [...servicePath, "restart"], fields.restart);
+    }
+  }
+
+  if (fields.ports !== undefined) {
+    if (fields.ports.length === 0) {
+      document.deleteIn([...servicePath, "ports"]);
+    } else {
+      document.setIn([...servicePath, "ports"], fields.ports);
+    }
+  }
+
+  if (fields.volumes !== undefined) {
+    if (fields.volumes.length === 0) {
+      document.deleteIn([...servicePath, "volumes"]);
+    } else {
+      document.setIn([...servicePath, "volumes"], fields.volumes);
+    }
+  }
+
+  if (fields.dependsOn !== undefined) {
+    if (fields.dependsOn.length === 0) {
+      document.deleteIn([...servicePath, "depends_on"]);
+    } else {
+      document.setIn([...servicePath, "depends_on"], fields.dependsOn);
+    }
+  }
+
+  if (fields.environment !== undefined) {
+    if (Object.keys(fields.environment).length === 0) {
+      document.deleteIn([...servicePath, "environment"]);
+    } else {
+      document.setIn([...servicePath, "environment"], fields.environment);
+    }
+  }
+
+  return { sourceText: String(document) };
+}
+
+// Backs the graph view's click-to-disconnect: removes one depends_on edge
+// (fromService -> dependencyService), reusing the same list/map-aware
+// removeDependency helper addServiceToCompose's connect flow and
+// removeServiceFromCompose's cleanup both already use.
+export function removeDependencyEdge(sourceText: string, fromService: string, dependencyService: string): { sourceText: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  removeDependency(document, fromService, dependencyService);
+  return { sourceText: String(document) };
+}
+
+// Backs the graph view's click-to-disconnect for a volume mount edge:
+// drops `volumeName` out of `serviceName`'s volumes list (short string form
+// only - see readServiceFields for why long-form mount entries are out of
+// scope for these graphical edits), then drops the top-level named volume
+// declaration too if no other service still mounts it.
+export function removeVolumeMount(sourceText: string, serviceName: string, volumeName: string): { sourceText: string } {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  const volumesPath = ["services", serviceName, "volumes"];
+  const existing = document.getIn(volumesPath, true);
+
+  if (isSeq(existing)) {
+    const remaining = existing.items.filter((item) => {
+      const text = isScalar(item) ? String(item.value) : String(item);
+      return text.split(":")[0] !== volumeName;
+    });
+
+    if (remaining.length === 0) {
+      document.deleteIn(volumesPath);
+    } else {
+      existing.items = remaining;
+    }
+  }
+
+  pruneVolumeIfOrphaned(document, volumeName);
+
+  return { sourceText: String(document) };
 }

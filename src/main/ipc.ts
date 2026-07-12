@@ -4,12 +4,18 @@ import type {
   AddServiceInput,
   AddServiceResult,
   AppSnapshot,
+  CancelActionResult,
+  GetServiceFieldsResult,
   OpenSourceResult,
   ProjectActionResult,
+  PullImageResult,
   ReadSourceFileResult,
   RemoveServiceResult,
   SaveSourceFileResult,
-  SearchDockerHubResult
+  SearchDockerHubResult,
+  ServiceFieldsInput,
+  SnapshotMutationResult,
+  UpdateServiceFieldsResult
 } from "../shared/contracts";
 import type { NetworkActionResult, NetworkTopologyResult } from "../shared/network-contracts";
 import { NetworkActionRequestSchema } from "../shared/network-contracts";
@@ -18,6 +24,7 @@ import { RemoteAccessEnableRequestSchema, RemoteAccessSetHostRequestSchema } fro
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { ProjectService } from "./project-service";
 import { searchDockerHub } from "./docker-hub-service";
+import { pullImage } from "./docker-pull-service";
 import { getNetworkTopology } from "./topology-service";
 import { runNetworkAction } from "./network-control-service";
 import {
@@ -64,6 +71,14 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
     }
 
     return projectService.openSource();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CREATE_PROJECT, async (event): Promise<OpenSourceResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    return projectService.createProject();
   });
 
   ipcMain.handle(IPC_CHANNELS.OPEN_SOURCE_PATH, async (event, sourcePath: string): Promise<OpenSourceResult> => {
@@ -154,6 +169,30 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
     return { ok: true, data: { results } };
   });
 
+  ipcMain.handle(IPC_CHANNELS.PULL_IMAGE, async (event, image: unknown): Promise<PullImageResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    if (typeof image !== "string" || image.trim() === "") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid image name." } };
+    }
+
+    try {
+      await pullImage(image, (progressEvent) => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.PULL_PROGRESS_EVENT, progressEvent);
+        }
+      });
+      return { ok: true, data: { pulled: true } };
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: "PROCESS_FAILED", message: error instanceof Error ? error.message : "Image pull failed." }
+      };
+    }
+  });
+
   ipcMain.handle(
     IPC_CHANNELS.ADD_SERVICE_TO_PROJECT,
     async (event, projectId: unknown, input: unknown): Promise<AddServiceResult> => {
@@ -181,6 +220,66 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       }
 
       return projectService.removeServiceFromProject(projectId, serviceName);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.GET_SERVICE_FIELDS,
+    async (event, projectId: unknown, serviceName: unknown): Promise<GetServiceFieldsResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof serviceName !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid get-service-fields request." } };
+      }
+
+      return projectService.getServiceFields(projectId, serviceName);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.UPDATE_SERVICE_FIELDS,
+    async (event, projectId: unknown, serviceName: unknown, fields: unknown): Promise<UpdateServiceFieldsResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof serviceName !== "string" || typeof fields !== "object" || fields === null) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid update-service-fields request." } };
+      }
+
+      return projectService.updateServiceFields(projectId, serviceName, fields as ServiceFieldsInput);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.DISCONNECT_DEPENDENCY,
+    async (event, projectId: unknown, fromService: unknown, toService: unknown): Promise<SnapshotMutationResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof fromService !== "string" || typeof toService !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid disconnect-dependency request." } };
+      }
+
+      return projectService.disconnectDependency(projectId, fromService, toService);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.DISCONNECT_VOLUME_MOUNT,
+    async (event, projectId: unknown, serviceName: unknown, volumeName: unknown): Promise<SnapshotMutationResult> => {
+      if (!isTrustedSender(mainWindow, event)) {
+        throw new Error("Untrusted sender");
+      }
+
+      if (typeof projectId !== "string" || typeof serviceName !== "string" || typeof volumeName !== "string") {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid disconnect-volume-mount request." } };
+      }
+
+      return projectService.disconnectVolumeMount(projectId, serviceName, volumeName);
     }
   );
 
@@ -249,6 +348,18 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       });
     }
   );
+
+  ipcMain.handle(IPC_CHANNELS.CANCEL_PROJECT_ACTION, async (event, projectId: unknown): Promise<CancelActionResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    if (typeof projectId !== "string") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid cancel-action request." } };
+    }
+
+    return projectService.cancelProjectAction(projectId);
+  });
 
   ipcMain.handle(IPC_CHANNELS.NETWORK_GET_TOPOLOGY, async (event): Promise<NetworkTopologyResult> => {
     if (!isTrustedSender(mainWindow, event)) {

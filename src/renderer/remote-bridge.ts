@@ -24,6 +24,9 @@ const NOT_LOCAL_MESSAGE = "Adding new projects requires the local app, not the r
 const REMOTE_MANAGEMENT_MESSAGE = "Remote access can only be managed from the local app.";
 const OPEN_EXTERNAL_MESSAGE =
   "Opening a published port isn't supported remotely - \"localhost\" would resolve to your own machine, not the server.";
+// These are newer local-app features that remote-access-service.ts doesn't
+// expose an HTTP route for yet - reject clearly rather than silently no-op.
+const NOT_YET_REMOTE_MESSAGE = "Not yet supported over the remote connection - use the local app for this.";
 
 async function authHeaders(token: string): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -81,6 +84,7 @@ export function createRemoteBridge(token: string): PreloadApi & NetworkPreloadAp
     copyToClipboard: (text) => navigator.clipboard.writeText(text),
     getSnapshot: () => getJson<AppSnapshot>("/api/snapshot", token),
     openSource: () => Promise.reject(new Error(NOT_LOCAL_MESSAGE)),
+    createProject: () => Promise.reject(new Error(NOT_LOCAL_MESSAGE)),
     openSourcePath: () => Promise.reject(new Error(NOT_LOCAL_MESSAGE)),
     openRecentSource: () => Promise.reject(new Error(NOT_LOCAL_MESSAGE)),
     openExternalUrl: () => Promise.reject(new Error(OPEN_EXTERNAL_MESSAGE)),
@@ -99,10 +103,17 @@ export function createRemoteBridge(token: string): PreloadApi & NetworkPreloadAp
       postJson<AddServiceResult>("/api/add-service", { projectId, input }, token),
     removeServiceFromProject: (projectId, serviceName) =>
       postJson<RemoveServiceResult>("/api/remove-service", { projectId, serviceName }, token),
+    getServiceFields: () => Promise.reject(new Error(NOT_YET_REMOTE_MESSAGE)),
+    updateServiceFields: () => Promise.reject(new Error(NOT_YET_REMOTE_MESSAGE)),
+    disconnectDependency: () => Promise.reject(new Error(NOT_YET_REMOTE_MESSAGE)),
+    disconnectVolumeMount: () => Promise.reject(new Error(NOT_YET_REMOTE_MESSAGE)),
+    pullImage: () => Promise.reject(new Error(NOT_YET_REMOTE_MESSAGE)),
     runProjectAction: (projectId, actionId) =>
       postJson<ProjectActionResult>("/api/project-action", { projectId, actionId }, token),
+    cancelProjectAction: () => Promise.reject(new Error(NOT_YET_REMOTE_MESSAGE)),
     subscribeBuildEvents: (listener) => subscribeSse<OperationEvent>("build", listener, token),
     subscribeSnapshotEvents: (listener) => subscribeSse<AppSnapshot>("snapshot", listener, token),
+    subscribePullProgress: () => () => {},
     getNetworkTopology: () => getJson<NetworkTopologyResult>("/api/network-topology", token),
     runNetworkAction: (request) => postJson<NetworkActionResult>("/api/network-action", request, token),
     getRemoteAccessStatus: () => Promise.resolve<RemoteAccessStatus>({ enabled: false, detectedAddresses: [] }),

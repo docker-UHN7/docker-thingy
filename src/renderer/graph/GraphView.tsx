@@ -25,6 +25,12 @@ const edgeTypes = {
   smartStraight: StraightLabeledEdge
 };
 
+// Every graph edge maps onto a single, unambiguous compose-file edit (remove
+// one depends_on entry / one volume mount).
+export type DisconnectableEdge =
+  | { kind: "dependency"; fromService: string; toService: string }
+  | { kind: "mount"; serviceName: string; volumeName: string };
+
 type GraphViewProps = {
   project: ProjectSummary;
   filterQuery: string;
@@ -32,6 +38,7 @@ type GraphViewProps = {
   children?: ReactNode;
   onSelectNode(nodeId: string): void;
   onClearSelection(): void;
+  onDisconnectEdge?: ((edge: DisconnectableEdge) => void) | undefined;
 };
 
 type FlowNode = Node<GraphNodeData>;
@@ -73,7 +80,8 @@ export function GraphView({
   selectedNodeId,
   children,
   onSelectNode,
-  onClearSelection
+  onClearSelection,
+  onDisconnectEdge
 }: GraphViewProps) {
   const initialGraph = useMemo(() => layoutGraph(project), [project]);
   const [rawNodes, setRawNodes] = useState<FlowNode[]>(() => initialGraph.nodes);
@@ -189,15 +197,21 @@ export function GraphView({
 
   const edges = useMemo<FlowEdge[]>(
     () =>
-      rawEdges.map((edge) => ({
-        ...edge,
-        style: {
-          ...(edge.style ?? {}),
-          opacity: !related || (related.has(edge.source) && related.has(edge.target)) ? 1 : 0.25,
-          strokeWidth: edge.data?.kind === "dependency" ? 2.2 : edge.data?.kind === "mount" ? 1.9 : 1.5
-        }
-      })),
-    [rawEdges, related]
+      rawEdges.map((edge) => {
+        const kind = (edge.data as GraphEdgeData | undefined)?.kind;
+        const disconnectable = Boolean(onDisconnectEdge) && (kind === "dependency" || kind === "mount");
+
+        return {
+          ...edge,
+          style: {
+            ...(edge.style ?? {}),
+            opacity: !related || (related.has(edge.source) && related.has(edge.target)) ? 1 : 0.25,
+            strokeWidth: kind === "dependency" ? 2.2 : kind === "mount" ? 1.9 : 1.5,
+            cursor: disconnectable ? "pointer" : undefined
+          }
+        };
+      }),
+    [rawEdges, related, onDisconnectEdge]
   );
 
   useEffect(
@@ -236,6 +250,37 @@ export function GraphView({
         onNodeClick={(_event, node) => {
           if (node.type === "serviceNode") {
             onSelectNode(node.id);
+          }
+        }}
+        onEdgeClick={(_event, edge) => {
+          if (!onDisconnectEdge) {
+            return;
+          }
+
+          const kind = (edge.data as GraphEdgeData | undefined)?.kind;
+
+          if (kind === "dependency") {
+            // Dependency edges point provider -> consumer (see graph-builder.ts),
+            // the opposite of depends_on's "consumer depends on provider"
+            // reading, so the service being edited is the *target*.
+            const fromService = project.services.find((service) => service.id === edge.target)?.name;
+            if (!fromService) {
+              return;
+            }
+            const toService =
+              project.services.find((service) => service.id === edge.source)?.name ??
+              edge.source.replace(/^external-service:/, "");
+            onDisconnectEdge({ kind: "dependency", fromService, toService });
+            return;
+          }
+
+          if (kind === "mount") {
+            const serviceName = project.services.find((service) => service.id === edge.target)?.name;
+            if (!serviceName) {
+              return;
+            }
+            const volumeName = edge.source.replace(/^volume:/, "");
+            onDisconnectEdge({ kind: "mount", serviceName, volumeName });
           }
         }}
         onInit={(instance) => {
