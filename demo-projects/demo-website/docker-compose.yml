@@ -1,6 +1,23 @@
 name: demo-website
 
 services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
 
   backend:
     build:
@@ -8,18 +25,24 @@ services:
       dockerfile: Dockerfile
     environment:
       PORT: "3000"
-      DATABASE_URL: postgresql://demo:demo@postgres:5432/demodb
+      DATABASE_URL: postgresql://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379
     ports:
-      - 3002:3000
+      - "3001:3000"
+    depends_on:
+      - postgres
+      - redis
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: http://localhost:3002
+        VITE_API_URL: http://localhost:3001
     ports:
-      - 8888:3001
+      - "8888:3001"
     depends_on:
       - backend
+
+volumes:
+  postgres-data:
