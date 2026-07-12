@@ -19,11 +19,17 @@ export type GraphEdgeData = {
   label?: string;
   color: string;
   dashed?: boolean;
+  condition?: "service_started" | "service_healthy" | "service_completed_successfully";
+  providerName?: string;
+  consumerName?: string;
 };
 
 type DependencyEdgeRecord = {
   sourceId: string;
   targetId: string;
+  sourceName: string;
+  targetName: string;
+  condition?: "service_started" | "service_healthy" | "service_completed_successfully";
   label?: string;
 };
 
@@ -79,12 +85,54 @@ const VOLUME_HORIZONTAL_GAP = 132;
 const LABEL_WIDTH = 88;
 const LABEL_HEIGHT = 26;
 
-function dependencyEdgeLabel(condition: string | undefined): string | undefined {
-  if (!condition || condition === "service_started") {
-    return undefined;
+function dependencyRelationshipLabel(
+  _providerName: string,
+  _consumerName: string,
+  condition: DependencyEdgeRecord["condition"]
+): string {
+  if (condition === "service_healthy") {
+    return "waits for health";
   }
 
-  return condition.replace(/^service_/, "");
+  if (condition === "service_completed_successfully") {
+    return "waits for completion";
+  }
+
+  return "depends on";
+}
+
+function dependencyEdgeColor(
+  provider: ServiceNodeModel | undefined,
+  consumer: ServiceNodeModel | undefined,
+  condition: DependencyEdgeRecord["condition"]
+): string {
+  if (condition !== "service_healthy") {
+    return "var(--status-info)";
+  }
+
+  const states = [
+    { health: provider?.healthStatus, status: provider?.status },
+    { health: consumer?.healthStatus, status: consumer?.status }
+  ];
+
+  if (states.some(({ health, status }) => health === "unhealthy" || status === "unhealthy")) {
+    return "var(--status-error)";
+  }
+
+  if (states.some(({ health, status }) => health === "starting" || status === "starting")) {
+    return "var(--status-warning)";
+  }
+
+  if (
+    provider &&
+    consumer &&
+    (provider.healthStatus === "healthy" || provider.status === "running") &&
+    (consumer.healthStatus === "healthy" || consumer.status === "running")
+  ) {
+    return "var(--status-running)";
+  }
+
+  return "var(--status-stopped)";
 }
 
 function compactPath(value: string, maxParts = 2): string {
@@ -564,10 +612,14 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
 
     const provider = serviceByName.get(relationship.to);
     const providerId = provider?.id ?? `external-service:${relationship.to}`;
-    const label = dependencyEdgeLabel(relationship.condition);
+    const condition = relationship.condition;
+    const label = dependencyRelationshipLabel(relationship.to, relationship.from, condition);
     dependencyRecords.push({
       sourceId: providerId,
       targetId: consumer.id,
+      sourceName: relationship.to,
+      targetName: relationship.from,
+      ...(condition ? { condition } : {}),
       ...(label ? { label } : {})
     });
   }
@@ -698,6 +750,9 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
   });
 
   for (const record of dependencyRecords) {
+    const provider = serviceByName.get(record.sourceName);
+    const consumer = serviceByName.get(record.targetName);
+    const edgeColor = dependencyEdgeColor(provider, consumer, record.condition);
     const key = edgeKey({
       source: record.sourceId,
       target: record.targetId,
@@ -716,19 +771,22 @@ export function buildGraph(project: ProjectSummary): { nodes: Node<GraphNodeData
       target: record.targetId,
       sourceHandle: "dependency-out",
       targetHandle: "dependency-in",
-      markerEnd: {
+      markerStart: {
         type: MarkerType.ArrowClosed,
         width: 16,
         height: 16,
-        color: "var(--accent-copper)"
+        color: edgeColor
       },
       style: {
-        stroke: "var(--accent-copper)",
+        stroke: edgeColor,
         strokeWidth: 2.2
       },
       data: {
         kind: "dependency",
-        color: "var(--accent-copper)",
+        color: edgeColor,
+        ...(record.condition ? { condition: record.condition } : {}),
+        providerName: record.sourceName,
+        consumerName: record.targetName,
         ...(record.label ? { label: record.label } : {})
       }
     });

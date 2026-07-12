@@ -58,6 +58,12 @@ type ProjectWorkspaceProps = {
 
 type DetailTab = "overview" | "edit" | "env" | "mounts" | "logs";
 
+type SelectedHealthEdge = {
+  providerName: string;
+  consumerName: string;
+  providerService?: ServiceNodeModel | undefined;
+};
+
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
   "start",
@@ -112,6 +118,7 @@ export function ProjectWorkspace({
   const [envFilter, setEnvFilter] = useState("");
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
+  const [selectedHealthEdge, setSelectedHealthEdge] = useState<SelectedHealthEdge | undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [addServiceOpen, setAddServiceOpen] = useState(false);
@@ -177,6 +184,7 @@ export function ProjectWorkspace({
     setSavingConfigFiles(false);
     setEditorOpen(false);
     setAddServiceOpen(false);
+    setSelectedHealthEdge(undefined);
   }, [project?.id]);
 
   async function applyConfigFilesChange(newFiles: string[]) {
@@ -242,6 +250,7 @@ export function ProjectWorkspace({
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setSelectedNodeId(undefined);
+        setSelectedHealthEdge(undefined);
         setSettingsOpen(false);
         setEditorOpen(false);
         setAddServiceOpen(false);
@@ -479,13 +488,26 @@ export function ProjectWorkspace({
           selectedNodeId={selectedNodeId}
           onSelectNode={(nodeId) => {
             setSelectedNodeId(nodeId);
+            setSelectedHealthEdge(undefined);
             setDetailTab("overview");
+            setSettingsOpen(false);
+            setEditorOpen(false);
+            setAddServiceOpen(false);
+          }}
+          onSelectHealthEdge={({ providerName, consumerName, providerId }) => {
+            setSelectedHealthEdge({
+              providerName,
+              consumerName,
+              providerService: project.services.find((service) => service.id === providerId)
+            });
+            setSelectedNodeId(undefined);
             setSettingsOpen(false);
             setEditorOpen(false);
             setAddServiceOpen(false);
           }}
           onClearSelection={() => {
             setSelectedNodeId(undefined);
+            setSelectedHealthEdge(undefined);
             setSettingsOpen(false);
             setEditorOpen(false);
             setAddServiceOpen(false);
@@ -737,6 +759,79 @@ export function ProjectWorkspace({
                   onClearRecents={() => void clearRecents()}
                 />
               </aside>
+            ) : selectedHealthEdge ? (
+              <aside className="floating-panel detail-panel detail-panel--overlay">
+                <div className="detail-panel__header">
+                  <div>
+                    <p className="eyebrow">Health Dependency</p>
+                    <h3 className="panel-title">{selectedHealthEdge.providerName}</h3>
+                  </div>
+                  <button className="icon-button" onClick={() => setSelectedHealthEdge(undefined)} aria-label="Close panel">
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="detail-stack">
+                  <div className="detail-card">
+                    <div className="detail-card__head">
+                      <span className="panel-title">{selectedHealthEdge.consumerName} waits for {selectedHealthEdge.providerName}</span>
+                    </div>
+                    <p className="body-copy body-copy--secondary">
+                      This edge only describes the dependency gate. Open the {selectedHealthEdge.providerName} service to inspect its own healthcheck logs.
+                    </p>
+                  </div>
+
+                  <div className="stats-grid">
+                    <div className="stat-block">
+                      <p className="stat-label">Gate type</p>
+                      <p className="mono-value">
+                        service_healthy
+                      </p>
+                    </div>
+                    <div className="stat-block">
+                      <p className="stat-label">Gate status</p>
+                      <p className="mono-value">
+                        {selectedHealthEdge.providerService?.healthStatus === "healthy"
+                          ? "satisfied"
+                          : selectedHealthEdge.providerService?.healthStatus === "unhealthy"
+                            ? "blocked"
+                            : selectedHealthEdge.providerService?.status === "running"
+                              ? "waiting"
+                              : "not available"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="detail-card">
+                    <div className="detail-table">
+                      <div className="detail-list__row detail-list__row--column">
+                        <div className="detail-row-main">
+                          <span className="mono-key">consumer</span>
+                          <span className="mono-value">{selectedHealthEdge.consumerName}</span>
+                        </div>
+                        <div className="detail-row-main">
+                          <span className="mono-key">provider</span>
+                          <span className="mono-value">{selectedHealthEdge.providerName}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {selectedHealthEdge.providerService ? (
+                      <div className="action-row">
+                        <button
+                          className="button button--secondary"
+                          onClick={() => {
+                            setSelectedNodeId(selectedHealthEdge.providerService?.id);
+                            setSelectedHealthEdge(undefined);
+                            setDetailTab("overview");
+                          }}
+                        >
+                          <span>Open {selectedHealthEdge.providerName}</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </aside>
             ) : selectedService ? (
               <aside className="floating-panel detail-panel detail-panel--overlay">
                 <div className="detail-panel__header">
@@ -793,7 +888,11 @@ export function ProjectWorkspace({
                 </div>
 
                 {detailTab === "overview" ? (
-                  <Inspector service={selectedService} uptimeLabel={uptimeLabel} stats={statsState?.ok ? statsState.data : undefined} />
+                  <Inspector
+                    service={selectedService}
+                    uptimeLabel={uptimeLabel}
+                    stats={statsState?.ok ? statsState.data : undefined}
+                  />
                 ) : null}
 
                 {detailTab === "edit" && canAddService ? (

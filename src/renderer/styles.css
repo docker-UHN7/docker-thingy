@@ -1245,6 +1245,8 @@ button {
 .detail-tabs {
   display: flex;
   gap: var(--space-1);
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .detail-tab {
@@ -1268,12 +1270,14 @@ button {
 .detail-list {
   display: grid;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .detail-table,
 .settings-stack {
   display: grid;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .stats-grid {
@@ -1291,6 +1295,8 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .detail-list__row--loading,
@@ -1310,9 +1316,11 @@ button {
 }
 
 .detail-panel--overlay {
-  width: 380px;
+  width: min(460px, calc(100vw - 32px));
   max-height: min(70vh, 720px);
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .detail-panel--editor {
@@ -1433,13 +1441,44 @@ button {
 .detail-row-main {
   justify-content: space-between;
   gap: var(--space-3);
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
 .detail-row-main .mono-key,
 .detail-row-main .mono-value {
   min-width: 0;
+  max-width: 100%;
+}
+
+.detail-panel--overlay .mono-path,
+.detail-panel--overlay .mono-key,
+.detail-panel--overlay .mono-value,
+.detail-panel--overlay .body-copy,
+.detail-panel--overlay .metadata-note,
+.detail-panel--overlay .toolbar-note,
+.detail-panel--overlay .panel-title,
+.detail-panel--overlay .stat-label {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.detail-panel--overlay .stats-grid,
+.detail-panel--overlay .detail-card,
+.detail-panel--overlay .stat-block,
+.detail-panel--overlay .detail-table,
+.detail-panel--overlay .detail-list__row,
+.detail-panel--overlay .detail-row-main,
+.detail-panel--overlay .action-row {
+  min-width: 0;
+}
+
+.detail-panel--overlay .action-row {
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
 }
 
 .mount-row {
@@ -1694,8 +1733,14 @@ button {
   font-size: var(--text-mono-sm);
   line-height: 15px;
   pointer-events: none;
-  white-space: nowrap;
+  max-width: 220px;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-node);
+  opacity: 0.96;
+  cursor: pointer;
+  pointer-events: all;
 }
 
 .operation-progress__steps {

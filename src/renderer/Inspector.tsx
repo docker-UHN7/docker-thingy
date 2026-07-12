@@ -162,7 +162,7 @@ export function Inspector({ service, uptimeLabel, stats }: InspectorProps) {
 
       {healthDetails && healthDetails.length > 0 ? (
         <div className="detail-card">
-          <p className="stat-label">Health check details</p>
+          <p className="stat-label">{service.name} health logs</p>
           <div className="detail-table">
             {healthDetails.slice(-3).reverse().map((entry, index) => (
               <div key={`${entry.start ?? entry.end ?? "health"}:${index}`} className="detail-list__row detail-list__row--column">

@@ -39,6 +39,7 @@ type GraphViewProps = {
   selectedNodeId: string | undefined;
   children?: ReactNode;
   onSelectNode(nodeId: string): void;
+  onSelectHealthEdge?(payload: { providerName: string; consumerName: string; providerId?: string | undefined }): void;
   onClearSelection(): void;
   onDisconnectEdge?: ((edge: DisconnectableEdge) => void) | undefined;
 };
@@ -132,6 +133,7 @@ export function GraphView({
   selectedNodeId,
   children,
   onSelectNode,
+  onSelectHealthEdge,
   onClearSelection,
   onDisconnectEdge
 }: GraphViewProps) {
@@ -299,20 +301,38 @@ export function GraphView({
   const edges = useMemo<FlowEdge[]>(
     () =>
       rawEdges.map((edge) => {
-        const kind = (edge.data as GraphEdgeData | undefined)?.kind;
+        const edgeData = edge.data as GraphEdgeData | undefined;
+        const kind = edgeData?.kind;
         const disconnectable = Boolean(onDisconnectEdge) && (kind === "dependency" || kind === "mount");
+        const healthSelectable =
+          kind === "dependency" &&
+          edgeData?.condition === "service_healthy" &&
+          edgeData.providerName &&
+          edgeData.consumerName &&
+          Boolean(onSelectHealthEdge);
 
         return {
           ...edge,
+          data: {
+            ...edgeData,
+            onActivate: healthSelectable
+              ? () =>
+                  onSelectHealthEdge?.({
+                    providerName: edgeData.providerName!,
+                    consumerName: edgeData.consumerName!,
+                    providerId: project.services.find((service) => service.id === edge.source)?.id
+                  })
+              : undefined
+          },
           style: {
             ...(edge.style ?? {}),
             opacity: !related || (related.has(edge.source) && related.has(edge.target)) ? 1 : 0.25,
             strokeWidth: kind === "dependency" ? 2.2 : kind === "mount" ? 1.9 : 1.5,
-            cursor: disconnectable ? "pointer" : undefined
+            cursor: disconnectable || healthSelectable ? "pointer" : undefined
           }
         };
       }),
-    [rawEdges, related, onDisconnectEdge]
+    [rawEdges, related, onDisconnectEdge, onSelectHealthEdge, project.services]
   );
 
   useEffect(
@@ -370,11 +390,27 @@ export function GraphView({
           }
         }}
         onEdgeClick={(_event, edge) => {
-          if (!onDisconnectEdge) {
+          const edgeData = edge.data as GraphEdgeData | undefined;
+          const kind = edgeData?.kind;
+
+          if (
+            kind === "dependency" &&
+            edgeData?.condition === "service_healthy" &&
+            edgeData.providerName &&
+            edgeData.consumerName &&
+            onSelectHealthEdge
+          ) {
+            onSelectHealthEdge({
+              providerName: edgeData.providerName,
+              consumerName: edgeData.consumerName,
+              providerId: project.services.find((service) => service.id === edge.source)?.id
+            });
             return;
           }
 
-          const kind = (edge.data as GraphEdgeData | undefined)?.kind;
+          if (!onDisconnectEdge) {
+            return;
+          }
 
           if (kind === "dependency") {
             // Dependency edges point provider -> consumer (see graph-builder.ts),

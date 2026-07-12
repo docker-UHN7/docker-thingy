@@ -1,4 +1,6 @@
 import { app, BrowserWindow, session } from "electron";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { ProjectService } from "./main/project-service";
 import { registerIpc } from "./main/ipc";
 import { disableRemoteAccess } from "./main/remote-access-service";
@@ -10,13 +12,24 @@ if (require("electron-squirrel-startup")) {
   app.quit();
 }
 
+function resolveWindowIcon(): string | undefined {
+  if (process.platform === "darwin") {
+    return undefined;
+  }
+
+  const candidate = join(app.getAppPath(), "build", "icon.ico");
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 function createMainWindow(): BrowserWindow {
+  const windowIcon = resolveWindowIcon();
   const mainWindow = new BrowserWindow({
     width: 1540,
     height: 960,
     minWidth: 1180,
     minHeight: 760,
     backgroundColor: "#0B1220",
+    ...(windowIcon ? { icon: windowIcon } : {}),
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
