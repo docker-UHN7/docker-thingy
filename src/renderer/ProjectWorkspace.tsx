@@ -58,10 +58,11 @@ type ProjectWorkspaceProps = {
 
 type DetailTab = "overview" | "edit" | "env" | "mounts" | "logs";
 
-type SelectedHealthEdge = {
+type SelectedDependencyEdge = {
   providerName: string;
   consumerName: string;
   providerService?: ServiceNodeModel | undefined;
+  condition?: "service_started" | "service_healthy" | "service_completed_successfully" | undefined;
 };
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
@@ -102,6 +103,19 @@ function relativeTimeLabel(value: string | undefined): string {
   return `${seconds}s`;
 }
 
+function projectHasEditableSource(project: ProjectSummary): boolean {
+  if (project.runtimeKind !== "compose" && project.runtimeKind !== "dockerfile") {
+    return false;
+  }
+
+  return Boolean(
+    project.sourcePath ||
+      project.configFiles.length > 0 ||
+      (project.allConfigFiles?.length ?? 0) > 0 ||
+      (project.dockerfilePaths?.length ?? 0) > 0
+  );
+}
+
 export function ProjectWorkspace({
   project,
   projects,
@@ -118,7 +132,7 @@ export function ProjectWorkspace({
   const [envFilter, setEnvFilter] = useState("");
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
-  const [selectedHealthEdge, setSelectedHealthEdge] = useState<SelectedHealthEdge | undefined>();
+  const [selectedDependencyEdge, setSelectedDependencyEdge] = useState<SelectedDependencyEdge | undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [addServiceOpen, setAddServiceOpen] = useState(false);
@@ -184,7 +198,7 @@ export function ProjectWorkspace({
     setSavingConfigFiles(false);
     setEditorOpen(false);
     setAddServiceOpen(false);
-    setSelectedHealthEdge(undefined);
+    setSelectedDependencyEdge(undefined);
   }, [project?.id]);
 
   async function applyConfigFilesChange(newFiles: string[]) {
@@ -250,7 +264,7 @@ export function ProjectWorkspace({
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setSelectedNodeId(undefined);
-        setSelectedHealthEdge(undefined);
+        setSelectedDependencyEdge(undefined);
         setSettingsOpen(false);
         setEditorOpen(false);
         setAddServiceOpen(false);
@@ -452,8 +466,7 @@ export function ProjectWorkspace({
   const commonFileNamePrefix = longestCommonPrefix(
     (project.allConfigFiles ?? []).map((file) => file.split(/[/\\]/).pop() ?? file)
   );
-  const canEditSource =
-    project.access === "editable" && (project.runtimeKind === "compose" || project.runtimeKind === "dockerfile");
+  const canEditSource = projectHasEditableSource(project);
   const canAddService = project.runtimeKind === "compose" && project.access === "editable";
 
   return (
@@ -488,17 +501,18 @@ export function ProjectWorkspace({
           selectedNodeId={selectedNodeId}
           onSelectNode={(nodeId) => {
             setSelectedNodeId(nodeId);
-            setSelectedHealthEdge(undefined);
+            setSelectedDependencyEdge(undefined);
             setDetailTab("overview");
             setSettingsOpen(false);
             setEditorOpen(false);
             setAddServiceOpen(false);
           }}
-          onSelectHealthEdge={({ providerName, consumerName, providerId }) => {
-            setSelectedHealthEdge({
+          onSelectDependencyEdge={({ providerName, consumerName, providerId, condition }) => {
+            setSelectedDependencyEdge({
               providerName,
               consumerName,
-              providerService: project.services.find((service) => service.id === providerId)
+              providerService: project.services.find((service) => service.id === providerId),
+              condition
             });
             setSelectedNodeId(undefined);
             setSettingsOpen(false);
@@ -507,7 +521,7 @@ export function ProjectWorkspace({
           }}
           onClearSelection={() => {
             setSelectedNodeId(undefined);
-            setSelectedHealthEdge(undefined);
+            setSelectedDependencyEdge(undefined);
             setSettingsOpen(false);
             setEditorOpen(false);
             setAddServiceOpen(false);
@@ -759,45 +773,50 @@ export function ProjectWorkspace({
                   onClearRecents={() => void clearRecents()}
                 />
               </aside>
-            ) : selectedHealthEdge ? (
+            ) : selectedDependencyEdge ? (
               <aside className="floating-panel detail-panel detail-panel--overlay">
                 <div className="detail-panel__header">
                   <div>
-                    <p className="eyebrow">Health Dependency</p>
-                    <h3 className="panel-title">{selectedHealthEdge.providerName}</h3>
+                    <p className="eyebrow">Dependency Condition</p>
+                    <h3 className="panel-title">{selectedDependencyEdge.providerName}</h3>
                   </div>
-                  <button className="icon-button" onClick={() => setSelectedHealthEdge(undefined)} aria-label="Close panel">
+                  <button className="icon-button" onClick={() => setSelectedDependencyEdge(undefined)} aria-label="Close panel">
                     <X size={16} />
                   </button>
                 </div>
 
                 <div className="detail-stack">
-                  <div className="detail-card">
-                    <div className="detail-card__head">
-                      <span className="panel-title">{selectedHealthEdge.consumerName} waits for {selectedHealthEdge.providerName}</span>
-                    </div>
-                    <p className="body-copy body-copy--secondary">
-                      This edge only describes the dependency gate. Open the {selectedHealthEdge.providerName} service to inspect its own healthcheck logs.
-                    </p>
-                  </div>
-
                   <div className="stats-grid">
                     <div className="stat-block">
-                      <p className="stat-label">Gate type</p>
+                      <p className="stat-label">Condition</p>
                       <p className="mono-value">
-                        service_healthy
+                        {selectedDependencyEdge.condition ?? "service_started"}
                       </p>
                     </div>
                     <div className="stat-block">
                       <p className="stat-label">Gate status</p>
                       <p className="mono-value">
-                        {selectedHealthEdge.providerService?.healthStatus === "healthy"
-                          ? "satisfied"
-                          : selectedHealthEdge.providerService?.healthStatus === "unhealthy"
-                            ? "blocked"
-                            : selectedHealthEdge.providerService?.status === "running"
+                        {selectedDependencyEdge.condition === "service_healthy"
+                          ? selectedDependencyEdge.providerService?.healthStatus === "healthy"
+                            ? "satisfied"
+                            : selectedDependencyEdge.providerService?.healthStatus === "unhealthy"
+                              ? "blocked"
+                              : selectedDependencyEdge.providerService?.status === "running"
+                                ? "waiting"
+                                : "not available"
+                          : selectedDependencyEdge.condition === "service_completed_successfully"
+                            ? selectedDependencyEdge.providerService?.details?.runtimeState.running
                               ? "waiting"
-                              : "not available"}
+                              : selectedDependencyEdge.providerService?.details?.runtimeState.exitCode === 0
+                                ? "satisfied"
+                                : selectedDependencyEdge.providerService?.details?.runtimeState.exitCode !== undefined
+                                  ? "blocked"
+                                  : "not available"
+                            : selectedDependencyEdge.providerService?.status === "running"
+                              ? "satisfied"
+                              : selectedDependencyEdge.providerService?.status === "starting"
+                                ? "waiting"
+                                : "blocked"}
                       </p>
                     </div>
                   </div>
@@ -807,25 +826,25 @@ export function ProjectWorkspace({
                       <div className="detail-list__row detail-list__row--column">
                         <div className="detail-row-main">
                           <span className="mono-key">consumer</span>
-                          <span className="mono-value">{selectedHealthEdge.consumerName}</span>
+                          <span className="mono-value">{selectedDependencyEdge.consumerName}</span>
                         </div>
                         <div className="detail-row-main">
                           <span className="mono-key">provider</span>
-                          <span className="mono-value">{selectedHealthEdge.providerName}</span>
+                          <span className="mono-value">{selectedDependencyEdge.providerName}</span>
                         </div>
                       </div>
                     </div>
-                    {selectedHealthEdge.providerService ? (
+                    {selectedDependencyEdge.providerService ? (
                       <div className="action-row">
                         <button
                           className="button button--secondary"
                           onClick={() => {
-                            setSelectedNodeId(selectedHealthEdge.providerService?.id);
-                            setSelectedHealthEdge(undefined);
+                            setSelectedNodeId(selectedDependencyEdge.providerService?.id);
+                            setSelectedDependencyEdge(undefined);
                             setDetailTab("overview");
                           }}
                         >
-                          <span>Open {selectedHealthEdge.providerName}</span>
+                          <span>Open {selectedDependencyEdge.providerName}</span>
                         </button>
                       </div>
                     ) : null}

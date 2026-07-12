@@ -39,7 +39,12 @@ type GraphViewProps = {
   selectedNodeId: string | undefined;
   children?: ReactNode;
   onSelectNode(nodeId: string): void;
-  onSelectHealthEdge?(payload: { providerName: string; consumerName: string; providerId?: string | undefined }): void;
+  onSelectDependencyEdge?(payload: {
+    providerName: string;
+    consumerName: string;
+    providerId?: string | undefined;
+    condition?: "service_started" | "service_healthy" | "service_completed_successfully" | undefined;
+  }): void;
   onClearSelection(): void;
   onDisconnectEdge?: ((edge: DisconnectableEdge) => void) | undefined;
 };
@@ -133,7 +138,7 @@ export function GraphView({
   selectedNodeId,
   children,
   onSelectNode,
-  onSelectHealthEdge,
+  onSelectDependencyEdge,
   onClearSelection,
   onDisconnectEdge
 }: GraphViewProps) {
@@ -302,37 +307,49 @@ export function GraphView({
     () =>
       rawEdges.map((edge) => {
         const edgeData = edge.data as GraphEdgeData | undefined;
+        if (!edgeData) {
+          return edge;
+        }
+
         const kind = edgeData?.kind;
         const disconnectable = Boolean(onDisconnectEdge) && (kind === "dependency" || kind === "mount");
-        const healthSelectable =
+        const dependencySelectable =
           kind === "dependency" &&
-          edgeData?.condition === "service_healthy" &&
           edgeData.providerName &&
           edgeData.consumerName &&
-          Boolean(onSelectHealthEdge);
+          Boolean(onSelectDependencyEdge);
 
         return {
           ...edge,
           data: {
-            ...edgeData,
-            onActivate: healthSelectable
-              ? () =>
-                  onSelectHealthEdge?.({
-                    providerName: edgeData.providerName!,
-                    consumerName: edgeData.consumerName!,
-                    providerId: project.services.find((service) => service.id === edge.source)?.id
-                  })
-              : undefined
+            kind: edgeData.kind,
+            color: edgeData.color,
+            ...(edgeData.label ? { label: edgeData.label } : {}),
+            ...(edgeData.dashed ? { dashed: edgeData.dashed } : {}),
+            ...(edgeData.condition ? { condition: edgeData.condition } : {}),
+            ...(edgeData.providerName ? { providerName: edgeData.providerName } : {}),
+            ...(edgeData.consumerName ? { consumerName: edgeData.consumerName } : {}),
+            ...(dependencySelectable
+              ? {
+                  onActivate: () =>
+                    onSelectDependencyEdge?.({
+                      providerName: edgeData.providerName!,
+                      consumerName: edgeData.consumerName!,
+                      providerId: project.services.find((service) => service.id === edge.source)?.id,
+                      condition: edgeData.condition
+                    })
+                }
+              : {})
           },
           style: {
             ...(edge.style ?? {}),
             opacity: !related || (related.has(edge.source) && related.has(edge.target)) ? 1 : 0.25,
             strokeWidth: kind === "dependency" ? 2.2 : kind === "mount" ? 1.9 : 1.5,
-            cursor: disconnectable || healthSelectable ? "pointer" : undefined
+            cursor: disconnectable || dependencySelectable ? "pointer" : undefined
           }
         };
       }),
-    [rawEdges, related, onDisconnectEdge, onSelectHealthEdge, project.services]
+    [rawEdges, related, onDisconnectEdge, onSelectDependencyEdge, project.services]
   );
 
   useEffect(
@@ -393,17 +410,12 @@ export function GraphView({
           const edgeData = edge.data as GraphEdgeData | undefined;
           const kind = edgeData?.kind;
 
-          if (
-            kind === "dependency" &&
-            edgeData?.condition === "service_healthy" &&
-            edgeData.providerName &&
-            edgeData.consumerName &&
-            onSelectHealthEdge
-          ) {
-            onSelectHealthEdge({
+          if (kind === "dependency" && edgeData?.providerName && edgeData.consumerName && onSelectDependencyEdge) {
+            onSelectDependencyEdge({
               providerName: edgeData.providerName,
               consumerName: edgeData.consumerName,
-              providerId: project.services.find((service) => service.id === edge.source)?.id
+              providerId: project.services.find((service) => service.id === edge.source)?.id,
+              condition: edgeData.condition
             });
             return;
           }

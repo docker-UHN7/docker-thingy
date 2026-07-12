@@ -961,11 +961,12 @@ export class ProjectService {
   // steered at an arbitrary file on disk.
   private resolveEditableFile(projectId: string, filePath: string): { project: ProjectSummary } | undefined {
     const project = this.snapshot.projects.find((entry) => entry.id === projectId);
-    if (!project || project.access !== "editable" || (project.runtimeKind !== "compose" && project.runtimeKind !== "dockerfile")) {
+    if (!project || (project.runtimeKind !== "compose" && project.runtimeKind !== "dockerfile")) {
       return undefined;
     }
 
     const allowedFiles = new Set([
+      ...(project.sourcePath ? [project.sourcePath] : []),
       ...project.configFiles,
       ...(project.allConfigFiles ?? []),
       ...(project.dockerfilePaths ?? [])

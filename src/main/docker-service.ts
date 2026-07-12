@@ -715,13 +715,22 @@ function mergeRuntimeProjectWithSource(
 
   return {
     ...runtimeProject,
+    id: sourceProject.id,
+    runtimeKind: sourceProject.runtimeKind,
+    access: sourceProject.access,
+    sourcePath: sourceProject.sourcePath,
+    configFiles: sourceProject.configFiles,
+    ...(sourceProject.allConfigFiles ? { allConfigFiles: sourceProject.allConfigFiles } : {}),
+    ...(sourceProject.dockerfilePaths ? { dockerfilePaths: sourceProject.dockerfilePaths } : {}),
+    actions: sourceProject.actions,
     services: mergedServices,
     composeProjectName: runtimeProject.composeProjectName,
-    sourcePath: sourceProject.sourcePath,
     diagnostics: [...sourceProject.diagnostics],
     buildStatus: "built",
     externalNodes: buildExternalNodes(mergedServices),
     relationshipEdges: buildRelationshipEdges(mergedServices),
+    lastUpdatedLabel: "Live runtime",
+    lastCheckedAt: new Date().toISOString(),
     sourceLinked: true
   };
 }
