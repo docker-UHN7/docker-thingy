@@ -114,7 +114,18 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
   enableRemoteAccess: (port, host) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_ENABLE, port, host),
   disableRemoteAccess: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_DISABLE),
   regenerateRemoteAccessToken: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_REGENERATE_TOKEN),
-  setRemoteAccessHost: (host) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_SET_HOST, host)
+  setRemoteAccessHost: (host) => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_SET_HOST, host),
+  windowControls: {
+    minimize: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE),
+    toggleMaximize: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_TOGGLE_MAXIMIZE),
+    close: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CLOSE),
+    isMaximized: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_IS_MAXIMIZED),
+    subscribeMaximizeChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized);
+      ipcRenderer.on(IPC_CHANNELS.WINDOW_MAXIMIZE_CHANGED_EVENT, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WINDOW_MAXIMIZE_CHANGED_EVENT, handler);
+    }
+  }
 };
 
 contextBridge.exposeInMainWorld("dockerExplorer", api);

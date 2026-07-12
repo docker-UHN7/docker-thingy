@@ -1,4 +1,4 @@
-import { dialog } from "electron";
+import { BrowserWindow, dialog } from "electron";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
@@ -12,6 +12,7 @@ import type {
   AppSnapshot,
   CancelActionResult,
   ConfigDriftResult,
+  DockerStatus,
   DriftFinding,
   ExecutableProjectActionId,
   GetServiceFieldsResult,
@@ -44,6 +45,7 @@ import {
   addServiceToCompose,
   applyServiceFieldEdits,
   hashSource,
+  listServiceNames,
   loadComposeProject,
   readServiceFields,
   removeDependencyEdge,
@@ -310,6 +312,25 @@ const DEFAULT_SETTINGS: AppSettings = {
   logTailLines: 200
 };
 
+// Native dialogs shown without an owning BrowserWindow are unattached, and on
+// Windows the app window doesn't reliably regain keyboard focus once they
+// close - clicks land but typing (e.g. in the search box) silently does
+// nothing until the window is refocused another way. Passing the window
+// keeps the dialog modal to it and Electron restores focus correctly.
+function dialogParentWindow(): BrowserWindow | undefined {
+  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+}
+
+function showOpenDialog(options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> {
+  const parentWindow = dialogParentWindow();
+  return parentWindow ? dialog.showOpenDialog(parentWindow, options) : dialog.showOpenDialog(options);
+}
+
+function showMessageBox(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const parentWindow = dialogParentWindow();
+  return parentWindow ? dialog.showMessageBox(parentWindow, options) : dialog.showMessageBox(options);
+}
+
 export class ProjectService {
   // Every public method below reads `this.snapshot`, awaits I/O, then writes
   // a new snapshot back. Without serializing those read-await-write spans,
@@ -349,6 +370,8 @@ export class ProjectService {
   private dockerEventBuffer = "";
   private dockerEventProcess: ChildProcessWithoutNullStreams | undefined;
   private disposed = false;
+  private fallbackSyncInterval: ReturnType<typeof setInterval> | undefined;
+  private cachedDockerStatus: { value: DockerStatus; expiresAt: number } | undefined;
 
   private snapshot: AppSnapshot = {
     dockerStatus: {
@@ -373,10 +396,28 @@ export class ProjectService {
   startAutoSync(): void {
     this.reconcileSourceWatchers();
     this.ensureDockerEventStream();
+
+    // `docker events` is the fast path for picking up state changes, but
+    // it's a single long-lived subprocess - if it misses an event, silently
+    // wedges, or the daemon's event stream hiccups (all things that happen
+    // in practice, especially against Docker Desktop's Windows/WSL relay),
+    // nothing else was correcting for it and the UI could show a stopped
+    // container as "running" indefinitely. This periodic sweep is a low-cost
+    // safety net so the UI self-heals within a bounded time either way.
+    if (!this.fallbackSyncInterval) {
+      this.fallbackSyncInterval = setInterval(() => {
+        this.scheduleRuntimeSync(0);
+      }, 15_000);
+      this.fallbackSyncInterval.unref?.();
+    }
   }
 
   dispose(): void {
     this.disposed = true;
+    if (this.fallbackSyncInterval) {
+      clearInterval(this.fallbackSyncInterval);
+      this.fallbackSyncInterval = undefined;
+    }
     if (this.runtimeSyncTimer) {
       clearTimeout(this.runtimeSyncTimer);
       this.runtimeSyncTimer = undefined;
@@ -589,10 +630,30 @@ export class ProjectService {
     return this.snapshot;
   }
 
+  // detectDockerStatus shells out to `docker` five times in a row
+  // (--version, context show, version, compose version, buildx version).
+  // synchronizeSnapshot used to call it unconditionally on every run, but it
+  // runs on every single docker event (container health ticks, log writes,
+  // etc.) - on an active project that's dozens of extra CLI spawns a minute
+  // for values (CLI/daemon availability, active context, versions) that
+  // essentially never change between two events a few seconds apart. Caching
+  // it briefly cuts that back to roughly once per TTL window instead of once
+  // per sync, which is most of where the "feels slow" was coming from.
+  private async getDockerStatus(): Promise<DockerStatus> {
+    const now = Date.now();
+    if (this.cachedDockerStatus && this.cachedDockerStatus.expiresAt > now) {
+      return this.cachedDockerStatus.value;
+    }
+
+    const value = await detectDockerStatus();
+    this.cachedDockerStatus = { value, expiresAt: now + 8_000 };
+    return value;
+  }
+
   async synchronizeSnapshot(): Promise<AppSnapshot> {
     return this.withLock(async () => {
       try {
-        const dockerStatus = await detectDockerStatus();
+        const dockerStatus = await this.getDockerStatus();
         const runtimeProjects = await discoverRuntimeProjects(dockerStatus);
         const sourceProjects = this.snapshot.projects.filter((project) => project.access !== "runtime-only");
         const contextName = dockerStatus.contextName ?? this.snapshot.dockerStatus.contextName ?? "unknown-context";
@@ -624,6 +685,10 @@ export class ProjectService {
         this.emitSnapshot();
         return this.snapshot;
       } catch {
+        // Don't let a stale "everything's fine" cache paper over a real
+        // failure - next sync (including the periodic fallback one) should
+        // actually re-check rather than reusing the last good status.
+        this.cachedDockerStatus = undefined;
         this.snapshot = {
           ...this.snapshot,
           dockerStatus: {
@@ -688,7 +753,7 @@ export class ProjectService {
   }
 
   async openSource(): Promise<OpenSourceResult> {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialog({
       properties: ["openDirectory"]
     });
 
@@ -773,7 +838,7 @@ export class ProjectService {
    * one instead of silently creating a second, conflicting compose file.
    */
   async createProject(): Promise<OpenSourceResult> {
-    const result = await dialog.showOpenDialog({
+    const result = await showOpenDialog({
       properties: ["openDirectory", "createDirectory"]
     });
 
@@ -794,7 +859,7 @@ export class ProjectService {
     } catch {}
 
     if (groups.length > 0 || hasDockerfile) {
-      const choice = await dialog.showMessageBox({
+      const choice = await showMessageBox({
         type: "question",
         buttons: ["Open existing project", "Cancel"],
         defaultId: 0,
@@ -1372,7 +1437,14 @@ export class ProjectService {
         };
       }
 
-      const knownServiceNames = new Set(project.services.map((service) => service.name));
+      const currentText = await readFile(mainPath, "utf8");
+
+      // Ground truth is the compose file being saved, not `this.snapshot`'s
+      // cached project - that snapshot only refreshes on the next
+      // docker-events-debounced sync, so a dependency target added moments
+      // ago (e.g. via "Add service") could still look "unknown" here and
+      // block the save even though it's right there in the file.
+      const knownServiceNames = listServiceNames(currentText);
       for (const dependency of fields.dependsOn ?? []) {
         if (dependency === serviceName) {
           return {
@@ -1388,7 +1460,6 @@ export class ProjectService {
         }
       }
 
-      const currentText = await readFile(mainPath, "utf8");
       const { sourceText: nextText } = applyServiceFieldEdits(currentText, serviceName, fields);
 
       const saveResult = await saveSourceAtomically(mainPath, nextText, hashSource(currentText));

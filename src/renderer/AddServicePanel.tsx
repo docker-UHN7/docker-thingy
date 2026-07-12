@@ -337,7 +337,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
             </p>
           ) : null}
 
-          {project.services.length > 0 ? (
+          {preset && project.services.length > 0 ? (
             <div className="detail-stack">
               <p className="eyebrow">Connect to</p>
               {project.services.map((service) => (
@@ -346,7 +346,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
                   <input type="checkbox" checked={connectTo.has(service.name)} onChange={() => toggleConnect(service.name)} />
                 </label>
               ))}
-              {preset && connectTo.size > 0 ? (
+              {connectTo.size > 0 ? (
                 <p className="metadata-note">
                   Adds {Object.keys(preset.connectionEnv).join(", ")} to {[...connectTo].join(", ")}, and depends_on: {serviceName}.
                 </p>

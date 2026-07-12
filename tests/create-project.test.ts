@@ -11,6 +11,10 @@ vi.mock("electron", () => ({
   dialog: {
     showOpenDialog: (...args: unknown[]) => showOpenDialog(...args),
     showMessageBox: (...args: unknown[]) => showMessageBox(...args)
+  },
+  BrowserWindow: {
+    getFocusedWindow: () => undefined,
+    getAllWindows: () => []
   }
 }));
 

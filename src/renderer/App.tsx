@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { NetworkTopologyView } from "./network/NetworkTopologyView";
+import { TitleBar } from "./TitleBar";
 import { useAppStore } from "./store";
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
 
   return (
     <div className="app-shell" data-theme={theme}>
+      <TitleBar />
       {screen === "launcher" ? (
         <Sidebar
           projects={snapshot?.projects ?? []}

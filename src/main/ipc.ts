@@ -574,6 +574,49 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
 
     return restoreVolume(volumeName);
   });
+
+  // Custom in-app titlebar (main.ts creates the window with frame: false) -
+  // these replace the native minimize/maximize/close chrome and the
+  // maximized-state push lets the renderer swap the maximize/restore icon.
+  ipcMain.handle(IPC_CHANNELS.WINDOW_MINIMIZE, (event) => {
+    if (!isTrustedSender(mainWindow, event) || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.minimize();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WINDOW_TOGGLE_MAXIMIZE, (event) => {
+    if (!isTrustedSender(mainWindow, event) || mainWindow.isDestroyed()) {
+      return;
+    }
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WINDOW_CLOSE, (event) => {
+    if (!isTrustedSender(mainWindow, event) || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.close();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WINDOW_IS_MAXIMIZED, (event): boolean => {
+    if (!isTrustedSender(mainWindow, event) || mainWindow.isDestroyed()) {
+      return false;
+    }
+    return mainWindow.isMaximized();
+  });
+
+  const sendMaximizedState = () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.WINDOW_MAXIMIZE_CHANGED_EVENT, mainWindow.isMaximized());
+    }
+  };
+  mainWindow.on("maximize", sendMaximizedState);
+  mainWindow.on("unmaximize", sendMaximizedState);
 }
 
 
