@@ -18,7 +18,7 @@ import type { AppSettings, DockerStatus, ProjectSummary } from "../shared/contra
 import { useAppStore } from "./store";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 import { deriveProjectLifecycle } from "./project-state";
-import appLogo from "./assets/logo.png";
+import { Logo } from "./Logo";
 
 type SidebarProps = {
   projects: ProjectSummary[];
@@ -129,7 +129,7 @@ export function Sidebar({
     <main className="launcher-screen">
       <header className="topbar topbar--launcher">
         <div className="brand-lockup">
-          <img className="brand-mark brand-mark--image" src={appLogo} alt="" />
+          <Logo className="brand-mark" />
           <h1 className="brand-title">VIMOKU</h1>
         </div>
 

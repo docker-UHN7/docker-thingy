@@ -41,7 +41,7 @@ import { deriveProjectLifecycle } from "./project-state";
 import { ServiceFieldsPanel } from "./ServiceFieldsPanel";
 import { SourceEditorPanel } from "./SourceEditorPanel";
 import { useAppStore } from "./store";
-import appLogo from "./assets/logo.png";
+import { Logo } from "./Logo";
 
 type ProjectWorkspaceProps = {
   project: ProjectSummary | undefined;
@@ -330,7 +330,7 @@ export function ProjectWorkspace({
       <main className="workspace-screen">
         <header className="topbar topbar--workspace">
           <div className="brand-lockup">
-            <img className="brand-mark brand-mark--image" src={appLogo} alt="" />
+            <Logo className="brand-mark" />
             <h1 className="brand-title">VIMOKU</h1>
           </div>
           <div className="topbar__controls">

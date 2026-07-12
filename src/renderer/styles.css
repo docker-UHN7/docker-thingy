@@ -160,7 +160,6 @@ button {
   min-height: 48px;
 }
 
-.brand-lockup,
 .toolbar-left,
 .toolbar-project,
 .topbar__controls,
@@ -217,27 +216,22 @@ button {
   flex-wrap: nowrap;
 }
 
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .brand-mark {
-  width: 40px;
-  height: 40px;
+  width: 63px;
+  height: 54px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
-  border: 1px solid var(--accent-copper-muted);
-  border-radius: var(--radius-sm);
   color: var(--accent-copper);
   font-family: var(--font-mono);
   font-size: var(--text-mono-sm);
   font-weight: 500;
-}
-
-.brand-mark--image {
-  object-fit: cover;
-  overflow: hidden;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  color: transparent;
 }
 
 .brand-title,
