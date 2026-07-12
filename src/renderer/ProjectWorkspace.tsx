@@ -4,7 +4,6 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
-  Copy,
   FileCode2,
   Layers,
   LoaderCircle,
@@ -59,7 +58,7 @@ type ProjectWorkspaceProps = {
   onSelectProject(projectId: string): void;
 };
 
-type DetailTab = "overview" | "edit" | "env" | "mounts" | "logs" | "shell";
+type DetailTab = "overview" | "edit" | "mounts" | "logs" | "shell";
 
 const STATS_HISTORY_LENGTH = 30;
 
@@ -134,7 +133,6 @@ export function ProjectWorkspace({
   onSelectProject
 }: ProjectWorkspaceProps) {
   const [query, setQuery] = useState("");
-  const [envFilter, setEnvFilter] = useState("");
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
   const [selectedDependencyEdge, setSelectedDependencyEdge] = useState<SelectedDependencyEdge | undefined>();
@@ -263,12 +261,6 @@ export function ProjectWorkspace({
     newFiles.splice(toIndex, 0, moved);
     void applyConfigFilesChange(newFiles);
   }
-
-  const visibleEnv = useMemo(() => {
-    const env = selectedService?.details?.env ?? [];
-    const term = envFilter.trim().toLowerCase();
-    return term ? env.filter((entry) => entry.key.toLowerCase().includes(term)) : env;
-  }, [envFilter, selectedService]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -925,7 +917,6 @@ export function ProjectWorkspace({
                     [
                       "overview",
                       ...(canAddService ? (["edit"] as const) : []),
-                      "env",
                       "mounts",
                       "logs",
                       "shell"
@@ -953,46 +944,6 @@ export function ProjectWorkspace({
 
                 {detailTab === "edit" && canAddService ? (
                   <ServiceFieldsPanel project={project} serviceName={selectedService.name} />
-                ) : null}
-
-                {detailTab === "env" ? (
-                  <div className="detail-stack">
-                    {(selectedService.details?.env.length ?? 0) > 15 ? (
-                      <label className="search-input">
-                        <ScanSearch size={16} />
-                        <input value={envFilter} onChange={(event) => setEnvFilter(event.target.value)} placeholder="Filter env vars" />
-                      </label>
-                    ) : null}
-                    <div className="detail-table">
-                      {visibleEnv.length === 0 ? (
-                        <div className="detail-list__row">
-                          <span className="mono-key">Runtime env</span>
-                          <span className="mono-value">Not available for this service.</span>
-                        </div>
-                      ) : (
-                        visibleEnv.map((entry) => (
-                          <div key={entry.key} className="detail-list__row detail-list__row--column">
-                            <div className="detail-row-main">
-                              <span className="mono-key" title={entry.key}>
-                                {entry.key}
-                              </span>
-                              <span className="mono-value" title={entry.masked ? "Value hidden" : entry.value}>
-                                {entry.masked ? "........" : entry.value}
-                              </span>
-                            </div>
-                            <button
-                              className="icon-button"
-                              onClick={() => void navigator.clipboard.writeText(entry.value)}
-                              aria-label={`Copy value for ${entry.key}`}
-                              title="Copy value"
-                            >
-                              <Copy size={14} />
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
                 ) : null}
 
                 {detailTab === "mounts" ? (

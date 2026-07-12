@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { app, BrowserWindow, session } from "electron";
+import { app, BrowserWindow, Menu, session } from "electron";
 import { ProjectService } from "./main/project-service";
 import { registerIpc } from "./main/ipc";
 import { disableRemoteAccess } from "./main/remote-access-service";
@@ -33,7 +33,12 @@ function createMainWindow(): BrowserWindow {
     minHeight: 760,
     backgroundColor: "#0B1220",
     ...(windowIcon ? { icon: windowIcon } : {}),
-    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
+    // Frameless everywhere - the renderer draws its own titlebar (App.tsx)
+    // integrated into the app header instead of the native OS chrome +
+    // default File/Edit/View/Window menu bar.
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const }
+      : { frame: false }),
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       contextIsolation: true,
@@ -82,6 +87,10 @@ function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  // The renderer's own titlebar (App.tsx) replaces this - drop the default
+  // File/Edit/View/Window menu bar so it doesn't linger via the Alt key.
+  Menu.setApplicationMenu(null);
+
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });

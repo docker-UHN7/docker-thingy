@@ -42,6 +42,17 @@ function languageExtensionFor(filePath: string) {
   return isDockerfilePath(filePath) ? dockerfileLanguage : yaml();
 }
 
+// react-codemirror reconfigures the whole editor (via a CodeMirror
+// StateEffect.reconfigure) whenever the `extensions` array or `basicSetup`
+// object it's handed is a *new reference* - it compares by identity, not
+// deep equality. Passed as inline literals, both get a fresh reference on
+// every render, so every unrelated re-render of this panel (e.g. a
+// background docker-events sync updating `project`) was tearing down and
+// rebuilding the search extension, silently closing an open Ctrl+F panel.
+// Hoisting basicSetup to a module constant and memoizing the extensions
+// array keeps their identity stable across renders.
+const CODE_MIRROR_BASIC_SETUP = { tabSize: 2, highlightActiveLine: true, foldGutter: true };
+
 // Two Dockerfiles resolved from different services often share the same
 // basename ("Dockerfile" in both ./api and ./worker) - fall back to a
 // project-relative path for any name that isn't unique in the list so the
@@ -120,6 +131,7 @@ export function SourceEditorPanel({ project, theme, onClose }: SourceEditorPanel
 
   const dirty = loadState.status === "ready" && draftText !== loadState.sourceText;
   const languageExtension = useMemo(() => languageExtensionFor(selectedFile), [selectedFile]);
+  const cmExtensions = useMemo(() => [languageExtension], [languageExtension]);
 
   async function handleSave(overrideHash?: string) {
     if (loadState.status !== "ready" || !selectedFile) {
@@ -233,10 +245,10 @@ export function SourceEditorPanel({ project, theme, onClose }: SourceEditorPanel
               value={draftText}
               height="420px"
               theme={theme}
-              extensions={[languageExtension]}
-              onChange={(value) => setDraftText(value)}
+              extensions={cmExtensions}
+              onChange={setDraftText}
               editable={!saving}
-              basicSetup={{ tabSize: 2, highlightActiveLine: true, foldGutter: true }}
+              basicSetup={CODE_MIRROR_BASIC_SETUP}
             />
           </div>
 

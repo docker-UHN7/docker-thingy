@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronRight, CircleAlert, LoaderCircle, Search, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, CircleAlert, LoaderCircle, Plus, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { AddServiceConnection, DockerHubSearchResult, ProjectSummary } from "../shared/contracts";
 import { findPresetForImageName, resolveConnectionEnv, searchPresets, type ServicePreset } from "../shared/service-presets";
@@ -42,6 +42,14 @@ function uniqueServiceName(base: string, existing: Set<string>): string {
   return `${base}-${index}`;
 }
 
+function removeAt<T>(list: T[], index: number): T[] {
+  return list.filter((_, entryIndex) => entryIndex !== index);
+}
+
+function replaceAt<T>(list: T[], index: number, value: T): T[] {
+  return list.map((entry, entryIndex) => (entryIndex === index ? value : entry));
+}
+
 export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
   const searchDockerHub = useAppStore((state) => state.searchDockerHub);
   const addServiceToProject = useAppStore((state) => state.addServiceToProject);
@@ -56,6 +64,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
   const [serviceName, setServiceName] = useState("");
   const [image, setImage] = useState("");
   const [environment, setEnvironment] = useState<Record<string, string>>({});
+  const [ports, setPorts] = useState<string[]>([]);
   const [connectTo, setConnectTo] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | undefined>();
@@ -106,6 +115,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
     setServiceName(uniqueServiceName(preset.defaultServiceName, existingServiceNames));
     setImage(preset.defaultImage);
     setEnvironment({ ...preset.environment });
+    setPorts([`${preset.defaultPort}:${preset.defaultPort}`]);
     setConnectTo(new Set());
     setSubmitError(undefined);
     setJustAdded(false);
@@ -119,6 +129,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
     setServiceName(uniqueServiceName(preset?.defaultServiceName ?? baseName, existingServiceNames));
     setImage(preset?.defaultImage ?? `${result.name}:latest`);
     setEnvironment(preset ? { ...preset.environment } : {});
+    setPorts(preset ? [`${preset.defaultPort}:${preset.defaultPort}`] : []);
     setConnectTo(new Set());
     setSubmitError(undefined);
     setJustAdded(false);
@@ -195,11 +206,14 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
     // exactOptionalPropertyTypes rejects `key: undefined` for optional
     // fields - build the payload by only including keys that have a value,
     // rather than assigning `undefined` to them.
+    const targetPorts = ports.map((entry) => entry.trim()).filter(Boolean);
+
     const result = await addServiceToProject(project.id, {
       serviceName,
       image: targetImage,
       connectTo: connections,
       ...(Object.keys(environment).length > 0 ? { environment } : {}),
+      ...(targetPorts.length > 0 ? { ports: targetPorts } : {}),
       ...(preset?.volumeMountPath
         ? { volumeName: `${serviceName}-data`, volumeMountPath: preset.volumeMountPath }
         : {})
@@ -330,6 +344,32 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
             </div>
           ) : null}
 
+          <div className="service-fields__list">
+            <p className="eyebrow">Ports</p>
+            {ports.map((port, index) => (
+              <div key={index} className="service-fields__row">
+                <input
+                  className="settings-input"
+                  value={port}
+                  placeholder="8080:80"
+                  onChange={(event) => setPorts((current) => replaceAt(current, index, event.target.value))}
+                />
+                <button
+                  type="button"
+                  className="icon-button icon-button--tiny"
+                  aria-label="Remove port"
+                  onClick={() => setPorts((current) => removeAt(current, index))}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+            <button type="button" className="chip-button" onClick={() => setPorts((current) => [...current, ""])}>
+              <Plus size={12} />
+              <span>Add port</span>
+            </button>
+          </div>
+
           {!preset ? (
             <p className="metadata-note">
               No curated preset for this image - it will be added with just the image name. Wire up environment
@@ -337,7 +377,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
             </p>
           ) : null}
 
-          {project.services.length > 0 ? (
+          {preset && project.services.length > 0 ? (
             <div className="detail-stack">
               <p className="eyebrow">Connect to</p>
               {project.services.map((service) => (
@@ -346,7 +386,7 @@ export function AddServicePanel({ project, onClose }: AddServicePanelProps) {
                   <input type="checkbox" checked={connectTo.has(service.name)} onChange={() => toggleConnect(service.name)} />
                 </label>
               ))}
-              {preset && connectTo.size > 0 ? (
+              {connectTo.size > 0 ? (
                 <p className="metadata-note">
                   Adds {Object.keys(preset.connectionEnv).join(", ")} to {[...connectTo].join(", ")}, and depends_on: {serviceName}.
                 </p>

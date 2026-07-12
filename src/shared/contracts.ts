@@ -574,4 +574,15 @@ export type PreloadApi = {
   checkImageUpdate(image: string): Promise<CheckImageUpdateResult>;
   backupVolume(volumeName: string): Promise<BackupVolumeResult>;
   restoreVolume(volumeName: string): Promise<RestoreVolumeResult>;
+  // Absent when the bundle is loaded in a plain browser tab via
+  // remote-access-service.ts rather than the Electron shell - there's no
+  // native window for these to control, so the renderer's titlebar hides
+  // the minimize/maximize/close controls when this is undefined.
+  windowControls?: {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<void>;
+    close(): Promise<void>;
+    isMaximized(): Promise<boolean>;
+    subscribeMaximizeChanged(listener: (maximized: boolean) => void): () => void;
+  };
 };

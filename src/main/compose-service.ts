@@ -883,6 +883,21 @@ function scalarText(value: unknown): string {
 // (mapping) port/volume entries are left out of the editable list since
 // there's no lossless flat-string representation for them - they're still
 // visible/editable via the raw YAML editor.
+// Ground truth for "does this service exist" checks (e.g. validating a
+// depends_on target before saving) - reads names straight from the compose
+// file being edited rather than the in-memory project snapshot, which can
+// lag a few hundred ms behind a just-applied edit (see project-service.ts's
+// docker-events-debounced sync).
+export function listServiceNames(sourceText: string): Set<string> {
+  const document = parseDocument(sourceText, { keepSourceTokens: true });
+  const servicesNode = document.get("services", true);
+  if (!isMap(servicesNode)) {
+    return new Set();
+  }
+
+  return new Set(servicesNode.items.map((item) => String(item.key)));
+}
+
 export function readServiceFields(sourceText: string, serviceName: string): ServiceFields | undefined {
   const document = parseDocument(sourceText, { keepSourceTokens: true });
   const servicesNode = document.get("services", true);
@@ -946,7 +961,13 @@ export function applyServiceFieldEdits(
   const servicePath = ["services", serviceName];
 
   if (fields.image !== undefined) {
-    setScalarPreservingNode(document, [...servicePath, "image"], fields.image);
+    // A build-based service (build: ... instead of image: ...) legitimately
+    // has no image - readServiceFields reports that as "", and previously
+    // this unconditionally wrote it back as `image: ""`, corrupting the
+    // service. Empty means "leave it alone", same as every other field here.
+    if (fields.image.trim() !== "") {
+      setScalarPreservingNode(document, [...servicePath, "image"], fields.image);
+    }
   }
 
   if (fields.restart !== undefined) {

@@ -666,7 +666,17 @@ function mergeServiceModel(
   const mergedPorts = mergePortMappings(runtimeService?.portMappings ?? [], sourceService.portMappings);
 
   return {
-    id: runtimeService?.id ?? `runtime-service:${contextName}:${projectName}:${sourceService.name}`,
+    // Always the source-declared id, never the runtime one - `runtimeService`
+    // is only present when this sync cycle's live discovery happened to
+    // succeed for this exact service (docker compose ps/inspect can fail
+    // transiently, or briefly return nothing mid-recreate), so keying off it
+    // meant a service's id could flip between `service:${name}` and
+    // `runtime-service:...` from one sync to the next. The renderer clears
+    // the selected/open service whenever its id disappears from the current
+    // project (see ProjectWorkspace.tsx), so that flip was silently closing
+    // the detail panel out from under the user on an unrelated background
+    // sync. sourceService.id is always present here and never changes.
+    id: sourceService.id,
     name: sourceService.name,
     image: sourceService.image ?? runtimeService?.image ?? details?.image,
     status: runtimeService?.status ?? sourceService.status,

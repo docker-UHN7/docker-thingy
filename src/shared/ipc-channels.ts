@@ -42,5 +42,10 @@ export const IPC_CHANNELS = {
   GET_CONFIG_DRIFT: "app:get-config-drift",
   CHECK_IMAGE_UPDATE: "app:check-image-update",
   BACKUP_VOLUME: "app:backup-volume",
-  RESTORE_VOLUME: "app:restore-volume"
+  RESTORE_VOLUME: "app:restore-volume",
+  WINDOW_MINIMIZE: "window:minimize",
+  WINDOW_TOGGLE_MAXIMIZE: "window:toggle-maximize",
+  WINDOW_CLOSE: "window:close",
+  WINDOW_IS_MAXIMIZED: "window:is-maximized",
+  WINDOW_MAXIMIZE_CHANGED_EVENT: "window:maximize-changed-event"
 } as const;
