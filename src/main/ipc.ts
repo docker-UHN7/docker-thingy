@@ -4,6 +4,7 @@ import type {
   AddServiceInput,
   AddServiceResult,
   AppSnapshot,
+  CancelActionResult,
   GetServiceFieldsResult,
   OpenSourceResult,
   ProjectActionResult,
@@ -347,6 +348,18 @@ export function registerIpc(mainWindow: BrowserWindow, projectService: ProjectSe
       });
     }
   );
+
+  ipcMain.handle(IPC_CHANNELS.CANCEL_PROJECT_ACTION, async (event, projectId: unknown): Promise<CancelActionResult> => {
+    if (!isTrustedSender(mainWindow, event)) {
+      throw new Error("Untrusted sender");
+    }
+
+    if (typeof projectId !== "string") {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid cancel-action request." } };
+    }
+
+    return projectService.cancelProjectAction(projectId);
+  });
 
   ipcMain.handle(IPC_CHANNELS.NETWORK_GET_TOPOLOGY, async (event): Promise<NetworkTopologyResult> => {
     if (!isTrustedSender(mainWindow, event)) {

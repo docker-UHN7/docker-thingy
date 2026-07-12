@@ -112,6 +112,7 @@ type AppState = {
   disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult>;
   activeProject(): ProjectSummary | undefined;
   runProjectAction(projectId: string, actionId: ExecutableProjectActionId): Promise<void>;
+  cancelProjectAction(projectId: string): Promise<void>;
   handleOperationEvent(event: OperationEvent): void;
 };
 
@@ -606,6 +607,18 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         };
       });
+    }
+  },
+  async cancelProjectAction(projectId) {
+    // No local state update here - main's own runProjectAction call is still
+    // in flight and will emit the final "failed"/cancelled status event
+    // through the same BUILD_EVENT stream handleOperationEvent already
+    // listens to, once the killed process's promise actually settles.
+    try {
+      await window.dockerExplorer.cancelProjectAction(projectId);
+    } catch {
+      // Best-effort - if the IPC call itself fails, the operation just runs
+      // until its own timeout; nothing further to do from here.
     }
   },
   handleOperationEvent(event) {

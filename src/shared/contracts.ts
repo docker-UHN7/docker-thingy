@@ -128,7 +128,8 @@ export type Result<T> =
           | "TIMEOUT"
           | "SOURCE_CHANGED_EXTERNALLY"
           | "VALIDATION_FAILED"
-          | "OPERATION_IN_PROGRESS";
+          | "OPERATION_IN_PROGRESS"
+          | "CANCELLED";
         message: string;
         details?: string | undefined;
       };
@@ -384,6 +385,8 @@ export type ProjectActionResult = Result<{
   snapshot: AppSnapshot;
 }>;
 
+export type CancelActionResult = Result<{ cancelled: true }>;
+
 export type ReadSourceFileResult = Result<{ sourceText: string; hash: string }>;
 export type SaveSourceFileResult = Result<{ hash: string; snapshot: AppSnapshot }>;
 
@@ -490,6 +493,7 @@ export type PreloadApi = {
   disconnectVolumeMount(projectId: string, serviceName: string, volumeName: string): Promise<SnapshotMutationResult>;
   pullImage(image: string): Promise<PullImageResult>;
   runProjectAction(projectId: string, actionId: ProjectAction["id"]): Promise<ProjectActionResult>;
+  cancelProjectAction(projectId: string): Promise<CancelActionResult>;
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;
   subscribePullProgress(listener: (event: PullProgressEvent) => void): () => void;

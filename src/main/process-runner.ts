@@ -7,6 +7,13 @@ export const PROCESS_LIMITS = {
   composeValidationMs: 30_000,
   dockerfileCheckMs: 60_000,
   composeOperationMs: 120_000,
+  // `docker compose up` pulls any image that isn't cached locally yet, and a
+  // handful of moderately-sized images on a normal connection can easily
+  // take several minutes on a project's first start - composeOperationMs is
+  // sized for the fast case (stop, start-by-id) and would kill a perfectly
+  // healthy pull that's just slow. The user can always cancel manually via
+  // the operation panel's Cancel button if it's actually stuck.
+  composeUpMs: 10 * 60_000,
   imageBuildMs: 15 * 60_000,
   logFetchMs: 15_000,
   statsFetchMs: 15_000,
@@ -36,7 +43,7 @@ export type ExecCommandOptions = {
   timeoutMs: number;
   maxBytes: number;
   category: CommandCategory;
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
 };
 
 export type ExecCommandResult = {

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Circle, LoaderCircle, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Circle, LoaderCircle, OctagonX, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { OperationState } from "./store";
 
@@ -7,6 +7,7 @@ type OperationProgressPanelProps = {
   projectTitle: string;
   variant?: "floating" | "inline";
   includeValidate?: boolean;
+  onCancel?: (() => void) | undefined;
 };
 
 type ProgressStep = {
@@ -123,7 +124,8 @@ export function OperationProgressPanel({
   operation,
   projectTitle,
   variant = "floating",
-  includeValidate = false
+  includeValidate = false,
+  onCancel
 }: OperationProgressPanelProps) {
   const [dismissedOperationId, setDismissedOperationId] = useState<string | undefined>();
   const [expandedKey, setExpandedKey] = useState<string | undefined>();
@@ -199,14 +201,26 @@ export function OperationProgressPanel({
     >
       <div className="operation-progress__header">
         <strong>{operationLabel(operation.actionId, projectTitle)}</strong>
-        <button
-          type="button"
-          className="icon-button operation-progress__close"
-          onClick={() => setDismissedOperationId(operationKey)}
-          aria-label="Dismiss notification"
-        >
-          <X size={14} />
-        </button>
+        <div className="operation-progress__header-actions">
+          {operation.status === "running" && onCancel ? (
+            <button
+              type="button"
+              className="button button--danger operation-progress__cancel"
+              onClick={onCancel}
+            >
+              <OctagonX size={14} />
+              <span>Cancel</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="icon-button operation-progress__close"
+            onClick={() => setDismissedOperationId(operationKey)}
+            aria-label="Dismiss notification"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
       <div className="validate-toast__header">
         {operation.status === "running" ? <LoaderCircle size={14} className="busy spin" /> : null}

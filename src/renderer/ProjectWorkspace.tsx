@@ -139,6 +139,7 @@ export function ProjectWorkspace({
   const disconnectDependency = useAppStore((state) => state.disconnectDependency);
   const disconnectVolumeMount = useAppStore((state) => state.disconnectVolumeMount);
   const runProjectAction = useAppStore((state) => state.runProjectAction);
+  const cancelProjectAction = useAppStore((state) => state.cancelProjectAction);
   const operations = useAppStore((state) => state.operations);
   const operation = project ? operations[project.id] : undefined;
 
@@ -700,7 +701,12 @@ export function ProjectWorkspace({
           </Panel>
 
           <Panel position="bottom-center" style={{ margin: 16 }}>
-            <OperationProgressPanel operation={operation} projectTitle={project.title} includeValidate />
+            <OperationProgressPanel
+              operation={operation}
+              projectTitle={project.title}
+              includeValidate
+              onCancel={() => void cancelProjectAction(project.id)}
+            />
           </Panel>
 
           <Panel position="center-right" style={{ margin: 16 }}>

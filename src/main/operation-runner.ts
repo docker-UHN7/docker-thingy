@@ -52,7 +52,8 @@ async function runStreamed(
   category: CommandCategory,
   sink: OperationSink,
   successTitle: string,
-  failureTitle: string
+  failureTitle: string,
+  signal?: AbortSignal
 ): Promise<ValidationOutcome> {
   const emitter = createLineEmitter(sink);
 
@@ -60,7 +61,7 @@ async function runStreamed(
     const result = await streamCommand(
       file,
       args,
-      { timeoutMs, maxBytes: PROCESS_LIMITS.maxDiagnosticBytes, category },
+      { timeoutMs, maxBytes: PROCESS_LIMITS.maxDiagnosticBytes, category, signal },
       (chunk, stream) => emitter.push(stream, chunk)
     );
     emitter.flush();
@@ -101,7 +102,7 @@ type RuntimeContainerRecord = {
   composeProjectName?: string | undefined;
 };
 
-async function findRuntimeContainers(project: ProjectSummary): Promise<RuntimeContainerRecord[]> {
+async function findRuntimeContainers(project: ProjectSummary, signal?: AbortSignal): Promise<RuntimeContainerRecord[]> {
   const filters: string[] = [];
 
   if (project.composeProjectName) {
@@ -117,7 +118,8 @@ async function findRuntimeContainers(project: ProjectSummary): Promise<RuntimeCo
       const inspected = await execCommand("docker", ["inspect", "--type", "container", ...ids], {
         timeoutMs: PROCESS_LIMITS.runtimeDiscoveryMs,
         maxBytes: PROCESS_LIMITS.maxJsonBytes,
-        category: "runtime-discovery"
+        category: "runtime-discovery",
+        signal
       });
 
       const parsed = JSON.parse(inspected.stdout) as Array<{
@@ -152,7 +154,8 @@ async function findRuntimeContainers(project: ProjectSummary): Promise<RuntimeCo
   const listed = await execCommand("docker", args, {
     timeoutMs: PROCESS_LIMITS.runtimeDiscoveryMs,
     maxBytes: PROCESS_LIMITS.maxJsonBytes,
-    category: "runtime-discovery"
+    category: "runtime-discovery",
+    signal
   });
 
   return listed.stdout
@@ -175,8 +178,8 @@ async function findRuntimeContainers(project: ProjectSummary): Promise<RuntimeCo
     }));
 }
 
-async function verifyContainersStopped(project: ProjectSummary): Promise<ValidationOutcome | undefined> {
-  const containers = await findRuntimeContainers(project);
+async function verifyContainersStopped(project: ProjectSummary, signal?: AbortSignal): Promise<ValidationOutcome | undefined> {
+  const containers = await findRuntimeContainers(project, signal);
   const stillRunning = containers.filter((container) => container.state.toLowerCase() === "running");
 
   if (stillRunning.length === 0) {
@@ -190,7 +193,10 @@ async function verifyContainersStopped(project: ProjectSummary): Promise<Validat
   };
 }
 
-async function verifyContainersRunningById(containerIds: readonly string[]): Promise<ValidationOutcome | undefined> {
+async function verifyContainersRunningById(
+  containerIds: readonly string[],
+  signal?: AbortSignal
+): Promise<ValidationOutcome | undefined> {
   if (containerIds.length === 0) {
     return {
       ok: false,
@@ -202,7 +208,8 @@ async function verifyContainersRunningById(containerIds: readonly string[]): Pro
   const inspected = await execCommand("docker", ["inspect", "--type", "container", ...containerIds], {
     timeoutMs: PROCESS_LIMITS.runtimeDiscoveryMs,
     maxBytes: PROCESS_LIMITS.maxJsonBytes,
-    category: "runtime-discovery"
+    category: "runtime-discovery",
+    signal
   });
 
   const parsed = JSON.parse(inspected.stdout) as Array<{
@@ -228,12 +235,14 @@ async function verifyContainersRunningById(containerIds: readonly string[]): Pro
 async function verifyComposeRunningState(
   project: ProjectSummary,
   configPath: string,
-  shouldBeRunning: boolean
+  shouldBeRunning: boolean,
+  signal?: AbortSignal
 ): Promise<ValidationOutcome | undefined> {
   const result = await execCommand("docker", composeArgs(project, configPath, "ps", ["--format", "json"]), {
     timeoutMs: PROCESS_LIMITS.runtimeDiscoveryMs,
     maxBytes: PROCESS_LIMITS.maxJsonBytes,
-    category: "runtime-discovery"
+    category: "runtime-discovery",
+    signal
   });
 
   const records = result.stdout
@@ -270,8 +279,12 @@ async function verifyComposeRunningState(
   return undefined;
 }
 
-async function stopRuntimeContainers(project: ProjectSummary, sink: OperationSink): Promise<ValidationOutcome | undefined> {
-  const containers = await findRuntimeContainers(project);
+async function stopRuntimeContainers(
+  project: ProjectSummary,
+  sink: OperationSink,
+  signal?: AbortSignal
+): Promise<ValidationOutcome | undefined> {
+  const containers = await findRuntimeContainers(project, signal);
   const runningContainers = containers.filter((container) => container.state.toLowerCase() === "running");
 
   if (runningContainers.length === 0) {
@@ -284,7 +297,8 @@ async function stopRuntimeContainers(project: ProjectSummary, sink: OperationSin
   const stopResult = await execCommand("docker", ["stop", ...runningContainers.map((container) => container.id)], {
     timeoutMs: PROCESS_LIMITS.composeOperationMs,
     maxBytes: PROCESS_LIMITS.maxDiagnosticBytes,
-    category: "compose-operation"
+    category: "compose-operation",
+    signal
   });
 
   for (const line of [stopResult.stdout, stopResult.stderr].join("\n").split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
@@ -299,11 +313,15 @@ async function stopRuntimeContainers(project: ProjectSummary, sink: OperationSin
     };
   }
 
-  return verifyContainersStopped(project);
+  return verifyContainersStopped(project, signal);
 }
 
-async function startRuntimeContainers(project: ProjectSummary, sink: OperationSink): Promise<ValidationOutcome | undefined> {
-  const containers = await findRuntimeContainers(project);
+async function startRuntimeContainers(
+  project: ProjectSummary,
+  sink: OperationSink,
+  signal?: AbortSignal
+): Promise<ValidationOutcome | undefined> {
+  const containers = await findRuntimeContainers(project, signal);
   const stoppedContainers = containers.filter((container) => container.state.toLowerCase() !== "running");
 
   if (stoppedContainers.length === 0) {
@@ -319,7 +337,8 @@ async function startRuntimeContainers(project: ProjectSummary, sink: OperationSi
   const startResult = await execCommand("docker", ["start", ...stoppedContainers.map((container) => container.id)], {
     timeoutMs: PROCESS_LIMITS.composeOperationMs,
     maxBytes: PROCESS_LIMITS.maxDiagnosticBytes,
-    category: "compose-operation"
+    category: "compose-operation",
+    signal
   });
 
   for (const line of [startResult.stdout, startResult.stderr].join("\n").split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
@@ -334,7 +353,10 @@ async function startRuntimeContainers(project: ProjectSummary, sink: OperationSi
     };
   }
 
-  return verifyContainersRunningById(stoppedContainers.map((container) => container.id));
+  return verifyContainersRunningById(
+    stoppedContainers.map((container) => container.id),
+    signal
+  );
 }
 
 /**
@@ -347,7 +369,8 @@ async function startRuntimeContainers(project: ProjectSummary, sink: OperationSi
 export async function executeProjectAction(
   project: ProjectSummary,
   actionId: ExecutableProjectActionId,
-  sink: OperationSink
+  sink: OperationSink,
+  signal?: AbortSignal
 ): Promise<ValidationOutcome> {
   const configPath = project.sourcePath ?? project.configFiles[0];
   const isDockerfile = project.runtimeKind === "dockerfile";
@@ -370,7 +393,8 @@ export async function executeProjectAction(
             "docker-build",
             sink,
             "Dockerfile validation passed",
-            "Dockerfile validation failed"
+            "Dockerfile validation failed",
+            signal
           )
         : runStreamed(
             "docker",
@@ -379,7 +403,8 @@ export async function executeProjectAction(
             "docker-build",
             sink,
             "Compose build validation passed",
-            "Compose build validation failed"
+            "Compose build validation failed",
+            signal
           );
 
     case "apply-start": {
@@ -400,18 +425,19 @@ export async function executeProjectAction(
       const outcome = await runStreamed(
         "docker",
         args,
-        PROCESS_LIMITS.composeOperationMs,
+        PROCESS_LIMITS.composeUpMs,
         "compose-operation",
         sink,
         "Compose project started",
-        "Compose project failed to start"
+        "Compose project failed to start",
+        signal
       );
 
       if (!outcome.ok) {
         return outcome;
       }
 
-      return (await verifyComposeRunningState(project, configPath, true)) ?? outcome;
+      return (await verifyComposeRunningState(project, configPath, true, signal)) ?? outcome;
     }
 
     case "start": {
@@ -423,9 +449,9 @@ export async function executeProjectAction(
         };
       }
 
-      const existingContainers = await findRuntimeContainers(project);
+      const existingContainers = await findRuntimeContainers(project, signal);
       if (existingContainers.length > 0) {
-        const directStartOutcome = await startRuntimeContainers(project, sink);
+        const directStartOutcome = await startRuntimeContainers(project, sink, signal);
         return directStartOutcome ?? {
           ok: true,
           title: "Compose project started",
@@ -436,18 +462,19 @@ export async function executeProjectAction(
       const outcome = await runStreamed(
         "docker",
         composeArgs(project, configPath, "up", ["-d"]),
-        PROCESS_LIMITS.composeOperationMs,
+        PROCESS_LIMITS.composeUpMs,
         "compose-operation",
         sink,
         "Compose project started",
-        "Compose project failed to start"
+        "Compose project failed to start",
+        signal
       );
 
       if (!outcome.ok) {
         return outcome;
       }
 
-      return (await verifyComposeRunningState(project, configPath, true)) ?? outcome;
+      return (await verifyComposeRunningState(project, configPath, true, signal)) ?? outcome;
     }
 
     case "stop":
@@ -468,21 +495,22 @@ export async function executeProjectAction(
         "compose-operation",
         sink,
         "Compose project stopped",
-        "Compose project failed to stop"
+        "Compose project failed to stop",
+        signal
       );
 
       if (!outcome.ok) {
         return outcome;
       }
 
-      const composeVerification = await verifyComposeRunningState(project, configPath, false);
+      const composeVerification = await verifyComposeRunningState(project, configPath, false, signal);
       if (!composeVerification) {
         return outcome;
       }
 
       sink("stderr", composeVerification.detail);
 
-      const directStopOutcome = await stopRuntimeContainers(project, sink);
+      const directStopOutcome = await stopRuntimeContainers(project, sink, signal);
       return directStopOutcome ?? outcome;
 
     case "build-image": {
@@ -500,7 +528,8 @@ export async function executeProjectAction(
           "docker-build",
           sink,
           `Image built as ${tag}`,
-          "Image build failed"
+          "Image build failed",
+          signal
         );
       }
 
@@ -511,7 +540,8 @@ export async function executeProjectAction(
         "docker-build",
         sink,
         "Compose build completed",
-        "Compose build failed"
+        "Compose build failed",
+        signal
       );
     }
 

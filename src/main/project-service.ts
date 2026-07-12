@@ -10,6 +10,7 @@ import type {
   AddServiceResult,
   AppSettings,
   AppSnapshot,
+  CancelActionResult,
   ExecutableProjectActionId,
   GetServiceFieldsResult,
   LogSnapshotResult,
@@ -289,13 +290,18 @@ export class ProjectService {
   }
 
   // Tracks which project ids currently have a long-running operation
-  // (validate/apply-start/stop/build-image) in flight, keyed by project id.
+  // (validate/apply-start/stop/build-image) in flight, keyed by project id -
+  // both the concurrency guard for "don't start a second operation on the
+  // same project" and, via `controller`, the handle cancelProjectAction uses
+  // to actually kill the underlying docker/compose process on demand.
   // Deliberately NOT folded into `lock`: that lock only guards short
   // read-await-write snapshot spans, whereas a build can run for minutes and
   // must not block unrelated snapshot reads/writes (e.g. synchronizing a
-  // different project) for that whole time. This map is the concurrency
-  // guard for "don't start a second operation on the same project".
-  private activeOperations = new Map<string, ExecutableProjectActionId>();
+  // different project) for that whole time.
+  private activeOperations = new Map<
+    string,
+    { actionId: ExecutableProjectActionId; controller: AbortController }
+  >();
   private snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
   private sourceWatchers = new Map<string, FSWatcher>();
   private sourceReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1491,16 +1497,22 @@ export class ProjectService {
       };
     }
 
-    this.activeOperations.set(projectId, actionId);
+    const controller = new AbortController();
+    this.activeOperations.set(projectId, { actionId, controller });
     const operationId = randomUUID();
     const startedAt = new Date().toISOString();
 
     onEvent({ kind: "status", projectId, operationId, actionId, status: "running", startedAt });
 
     try {
-      const outcome = await executeProjectAction(project, actionId, (stream, line) => {
-        onEvent({ kind: "output", projectId, operationId, actionId, stream, line });
-      });
+      const outcome = await executeProjectAction(
+        project,
+        actionId,
+        (stream, line) => {
+          onEvent({ kind: "output", projectId, operationId, actionId, stream, line });
+        },
+        controller.signal
+      );
 
       let snapshot = await this.finalizeOperation(projectId, actionId, outcome);
       if (actionId !== "validate") {
@@ -1522,7 +1534,16 @@ export class ProjectService {
 
       return { ok: true, data: { operationId, outcome, snapshot } };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "The operation failed unexpectedly.";
+      // cancelProjectAction aborts `controller` directly - by the time the
+      // killed process's promise rejects here, `signal.aborted` is the only
+      // reliable way to tell "the user cancelled this" apart from any other
+      // process failure (a plain kill doesn't come back as a timeout error).
+      const cancelled = controller.signal.aborted;
+      const message = cancelled
+        ? "Operation cancelled."
+        : error instanceof Error
+          ? error.message
+          : "The operation failed unexpectedly.";
 
       onEvent({
         kind: "status",
@@ -1537,11 +1558,30 @@ export class ProjectService {
 
       return {
         ok: false,
-        error: { code: isTimeoutError(error) ? "TIMEOUT" : "PROCESS_FAILED", message }
+        error: { code: cancelled ? "CANCELLED" : isTimeoutError(error) ? "TIMEOUT" : "PROCESS_FAILED", message }
       };
     } finally {
       this.activeOperations.delete(projectId);
     }
+  }
+
+  /**
+   * Aborts whatever operation is currently running for `projectId` (if any).
+   * The in-flight `runProjectAction` call observes the same AbortController
+   * and handles its own cleanup/status event once the killed process's
+   * promise settles - this just triggers that.
+   */
+  async cancelProjectAction(projectId: string): Promise<CancelActionResult> {
+    const active = this.activeOperations.get(projectId);
+    if (!active) {
+      return {
+        ok: false,
+        error: { code: "VALIDATION_FAILED", message: "No operation is currently running for this project." }
+      };
+    }
+
+    active.controller.abort();
+    return { ok: true, data: { cancelled: true } };
   }
 
   private async finalizeOperation(

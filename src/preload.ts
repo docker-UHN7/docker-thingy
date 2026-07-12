@@ -36,6 +36,7 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
     ipcRenderer.invoke(IPC_CHANNELS.DISCONNECT_VOLUME_MOUNT, projectId, serviceName, volumeName),
   pullImage: (image) => ipcRenderer.invoke(IPC_CHANNELS.PULL_IMAGE, image),
   runProjectAction: (projectId, actionId) => ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_ACTION, projectId, actionId),
+  cancelProjectAction: (projectId) => ipcRenderer.invoke(IPC_CHANNELS.CANCEL_PROJECT_ACTION, projectId),
   subscribeBuildEvents: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OperationEvent) => {
       try {

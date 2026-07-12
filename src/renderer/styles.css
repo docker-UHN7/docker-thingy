@@ -1589,10 +1589,21 @@ button {
   height: 24px;
 }
 
+.operation-progress__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .validate-toast__header {
   font-size: var(--text-body);
   line-height: 20px;
   color: var(--text-primary);
+}
+
+.operation-progress__cancel {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
 }
 
 .validate-toast__details {
