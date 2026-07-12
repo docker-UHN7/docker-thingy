@@ -500,7 +500,14 @@ export function toContainerDetails(inspected: z.infer<typeof ContainerInspectSch
       error: inspected.State?.Error,
       startedAt: inspected.State?.StartedAt,
       finishedAt: inspected.State?.FinishedAt,
-      healthStatus: normalizeHealth(inspected.State?.Health?.Status)
+      healthStatus: normalizeHealth(inspected.State?.Health?.Status),
+      healthFailingStreak: inspected.State?.Health?.FailingStreak,
+      healthLog: inspected.State?.Health?.Log?.map((entry) => ({
+        start: entry.Start,
+        end: entry.End,
+        exitCode: entry.ExitCode,
+        output: entry.Output?.trim()
+      }))
     },
     resources: {
       memoryBytes: inspected.HostConfig?.Memory,

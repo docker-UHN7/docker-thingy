@@ -45,6 +45,19 @@ function formatCpuUsage(value: number | undefined): string {
   return value === undefined ? "not available" : `${value.toFixed(1)}%`;
 }
 
+function formatTimestamp(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed.toLocaleString();
+}
+
 export function formatMemoryUsage(stats: ContainerStats | undefined): string {
   if (!stats || stats.memoryUsageBytes === undefined) {
     return "not available";
@@ -62,6 +75,10 @@ export function Inspector({ service, uptimeLabel, stats }: InspectorProps) {
     resources?.restartRetryCount && resources.restartRetryCount > 0 ? ` (${resources.restartRetryCount} retries)` : "";
   const networkSummary = service.categories.networks.join(", ") || "network data available once running";
   const exitStatus = runtime?.running ? "n/a (running)" : runtime?.exitCode !== undefined ? `exit ${runtime.exitCode}` : "not available";
+  const latestHealthLog = runtime?.healthLog?.at(-1);
+  const healthDetails = runtime?.healthLog?.filter(
+    (entry) => entry.output || entry.exitCode !== undefined || entry.start || entry.end
+  );
 
   return (
     <div className="detail-stack">
@@ -111,8 +128,20 @@ export function Inspector({ service, uptimeLabel, stats }: InspectorProps) {
           <p className="mono-value">{formatMemoryUsage(stats)}</p>
         </div>
         <div className="stat-block">
+          <p className="stat-label">Health</p>
+          <p className="mono-value">{runtime?.healthStatus ?? service.healthStatus ?? "not available"}</p>
+        </div>
+        <div className="stat-block">
+          <p className="stat-label">Health retries</p>
+          <p className="mono-value">{runtime?.healthFailingStreak ?? 0}</p>
+        </div>
+        <div className="stat-block">
           <p className="stat-label">Uptime</p>
           <p className="mono-value">{uptimeLabel}</p>
+        </div>
+        <div className="stat-block">
+          <p className="stat-label">Last health check</p>
+          <p className="mono-value">{formatTimestamp(latestHealthLog?.end ?? latestHealthLog?.start) ?? "not available"}</p>
         </div>
         <div className="stat-block">
           <p className="stat-label">Exit status</p>
@@ -128,6 +157,29 @@ export function Inspector({ service, uptimeLabel, stats }: InspectorProps) {
         <div className="detail-card detail-card--error">
           <p className="stat-label">Last error</p>
           <p className="mono-value">{runtime.error}</p>
+        </div>
+      ) : null}
+
+      {healthDetails && healthDetails.length > 0 ? (
+        <div className="detail-card">
+          <p className="stat-label">Health check details</p>
+          <div className="detail-table">
+            {healthDetails.slice(-3).reverse().map((entry, index) => (
+              <div key={`${entry.start ?? entry.end ?? "health"}:${index}`} className="detail-list__row detail-list__row--column">
+                <div className="detail-row-main">
+                  <span className="mono-key">
+                    exit {entry.exitCode ?? "?"}
+                  </span>
+                  <span className="mono-value">
+                    {formatTimestamp(entry.end ?? entry.start) ?? "time unavailable"}
+                  </span>
+                </div>
+                <span className="mono-value" title={entry.output ?? "No output"}>
+                  {entry.output?.trim() || "No healthcheck output from Docker."}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>

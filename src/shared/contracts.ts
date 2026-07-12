@@ -34,7 +34,18 @@ export const ContainerInspectSchema = z.looseObject({
       FinishedAt: z.string().optional(),
       Health: z
         .looseObject({
-          Status: z.string().optional()
+          Status: z.string().optional(),
+          FailingStreak: z.number().optional(),
+          Log: z
+            .array(
+              z.looseObject({
+                Start: z.string().optional(),
+                End: z.string().optional(),
+                ExitCode: z.number().optional(),
+                Output: z.string().optional()
+              })
+            )
+            .optional()
         })
         .optional()
     })
@@ -195,6 +206,13 @@ export type ResourceLimits = {
   restartRetryCount?: number | undefined;
 };
 
+export type HealthLogEntry = {
+  start?: string | undefined;
+  end?: string | undefined;
+  exitCode?: number | undefined;
+  output?: string | undefined;
+};
+
 export type RuntimeState = {
   status: string;
   running: boolean;
@@ -205,6 +223,8 @@ export type RuntimeState = {
   startedAt?: string | undefined;
   finishedAt?: string | undefined;
   healthStatus?: DockerHealth | undefined;
+  healthFailingStreak?: number | undefined;
+  healthLog?: HealthLogEntry[] | undefined;
 };
 
 export type ContainerDetails = {
