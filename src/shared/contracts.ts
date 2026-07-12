@@ -455,6 +455,47 @@ export type PullProgressEvent = {
 
 export type PullImageResult = Result<{ pulled: true }>;
 
+// Container shell/exec - line-buffered stdin/stdout streaming over a spawned
+// `docker exec -i <id> sh`, not a real pty (no node-pty dependency). Good
+// enough for running ordinary commands; curses-style programs (vim, top)
+// won't render correctly since there's no TTY on either end.
+export type ExecOutputEvent = {
+  sessionId: string;
+  stream: "stdout" | "stderr";
+  chunk: string;
+};
+
+export type ExecExitEvent = {
+  sessionId: string;
+  exitCode: number | null;
+};
+
+// Config drift: a running container's actual state vs. what the main
+// compose file declares for that service. Only covers services declared in
+// the project's main config file (same limitation getServiceFields already
+// has for override files).
+export type DriftFinding = {
+  serviceName: string;
+  field: "image" | "restart" | "environment";
+  declared: string;
+  actual: string;
+};
+
+export type ConfigDriftResult = Result<{ findings: DriftFinding[] }>;
+
+export type ImageUpdateInfo = {
+  image: string;
+  updateAvailable: boolean;
+  remoteDigest?: string | undefined;
+  localDigest?: string | undefined;
+  checkedAt: string;
+};
+
+export type CheckImageUpdateResult = Result<{ info: ImageUpdateInfo | undefined }>;
+
+export type BackupVolumeResult = Result<{ cancelled: true } | { filePath: string }>;
+export type RestoreVolumeResult = Result<{ cancelled: true } | { restored: true }>;
+
 export type PreloadApi = {
   // Routed through here rather than the web Clipboard API directly - the
   // Electron BrowserWindow denies every permission request/check (see
@@ -498,4 +539,13 @@ export type PreloadApi = {
   subscribeBuildEvents(listener: (event: OperationEvent) => void): () => void;
   subscribeSnapshotEvents(listener: (snapshot: AppSnapshot) => void): () => void;
   subscribePullProgress(listener: (event: PullProgressEvent) => void): () => void;
+  startContainerExec(containerId: string): Promise<string>;
+  writeContainerExec(sessionId: string, data: string): Promise<void>;
+  stopContainerExec(sessionId: string): Promise<void>;
+  subscribeExecOutput(listener: (event: ExecOutputEvent) => void): () => void;
+  subscribeExecExit(listener: (event: ExecExitEvent) => void): () => void;
+  getConfigDrift(projectId: string): Promise<ConfigDriftResult>;
+  checkImageUpdate(image: string): Promise<CheckImageUpdateResult>;
+  backupVolume(volumeName: string): Promise<BackupVolumeResult>;
+  restoreVolume(volumeName: string): Promise<RestoreVolumeResult>;
 };

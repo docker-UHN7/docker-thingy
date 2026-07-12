@@ -185,7 +185,11 @@ export function buildTopology(
         to: `bridge:${bridgeName}`,
         kind: "attachment",
         state: controlState.containerLinks[actionTargetId] ? "down" : "up",
-        controllable: true,
+        // Docker clears MacAddress (and the container's PID, which
+        // container-link also needs) once a container is stopped, so there's
+        // no live interface to target - disable the click affordance instead
+        // of letting the user hit a confusing error after confirming.
+        controllable: Boolean(network.macAddress),
         verb: "container-link",
         actionTargetId
       });

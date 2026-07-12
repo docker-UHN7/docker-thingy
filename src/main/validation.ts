@@ -59,6 +59,13 @@ export function isValidRestartPolicy(value: unknown): value is string {
   return typeof value === "string" && RESTART_POLICY_PATTERN.test(value);
 }
 
+// Docker volume names follow the same character set as container names.
+const VOLUME_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$/;
+
+export function isValidVolumeName(value: unknown): value is string {
+  return typeof value === "string" && VOLUME_NAME_PATTERN.test(value);
+}
+
 const MIN_LOG_TAIL = 1;
 const MAX_LOG_TAIL = 10_000;
 const DEFAULT_LOG_TAIL = 200;

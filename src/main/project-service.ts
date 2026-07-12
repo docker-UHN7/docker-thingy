@@ -11,6 +11,8 @@ import type {
   AppSettings,
   AppSnapshot,
   CancelActionResult,
+  ConfigDriftResult,
+  DriftFinding,
   ExecutableProjectActionId,
   GetServiceFieldsResult,
   LogSnapshotResult,
@@ -29,6 +31,7 @@ import type {
   UpdateServiceFieldsResult,
   ValidationOutcome
 } from "../shared/contracts";
+import { detectServiceDrift } from "./drift-service";
 import {
   detectDockerStatus,
   discoverRuntimeProjects,
@@ -1287,6 +1290,47 @@ export class ProjectService {
       return {
         ok: false,
         error: { code: "PROCESS_FAILED", message: error instanceof Error ? error.message : "Unable to read service fields." }
+      };
+    }
+  }
+
+  /**
+   * Compares each running, compose-declared service's actual container state
+   * against what the project's main compose file declares for it - same
+   * base-file-only scope as getServiceFields, one file read shared across
+   * every service rather than one read per service.
+   */
+  async getConfigDrift(projectId: string): Promise<ConfigDriftResult> {
+    const project = this.snapshot.projects.find((entry) => entry.id === projectId);
+    if (!project || project.runtimeKind !== "compose" || project.access !== "editable") {
+      return { ok: true, data: { findings: [] } };
+    }
+
+    const mainPath = project.sourcePath ?? project.configFiles[0];
+    if (!mainPath) {
+      return { ok: true, data: { findings: [] } };
+    }
+
+    try {
+      const sourceText = await readFile(mainPath, "utf8");
+      const findings: DriftFinding[] = [];
+
+      for (const service of project.services) {
+        if (!service.details) {
+          continue;
+        }
+        const fields = readServiceFields(sourceText, service.name);
+        if (!fields) {
+          continue;
+        }
+        findings.push(...detectServiceDrift(service.name, fields, service.details));
+      }
+
+      return { ok: true, data: { findings } };
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: "PROCESS_FAILED", message: error instanceof Error ? error.message : "Unable to check config drift." }
       };
     }
   }

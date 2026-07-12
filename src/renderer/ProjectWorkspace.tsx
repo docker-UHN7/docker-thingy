@@ -22,7 +22,9 @@ import { Panel } from "@xyflow/react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import type {
   AppSettings,
+  ContainerStats,
   DockerStatus,
+  DriftFinding,
   ExecutableProjectActionId,
   LogSnapshotResult,
   ProjectSummary,
@@ -36,6 +38,7 @@ import { Inspector } from "./Inspector";
 import { LogsPanel } from "./LogsPanel";
 import { OperationProgressPanel } from "./OperationProgressPanel";
 import { ProjectActionToolbar } from "./ProjectActionToolbar";
+import { ShellPanel } from "./ShellPanel";
 import { GraphView, type DisconnectableEdge } from "./graph/GraphView";
 import { deriveProjectLifecycle } from "./project-state";
 import { ServiceFieldsPanel } from "./ServiceFieldsPanel";
@@ -56,7 +59,9 @@ type ProjectWorkspaceProps = {
   onSelectProject(projectId: string): void;
 };
 
-type DetailTab = "overview" | "edit" | "env" | "mounts" | "logs";
+type DetailTab = "overview" | "edit" | "env" | "mounts" | "logs" | "shell";
+
+const STATS_HISTORY_LENGTH = 30;
 
 const EXECUTABLE_ACTION_IDS: ReadonlySet<string> = new Set<ExecutableProjectActionId>([
   "validate",
@@ -117,6 +122,11 @@ export function ProjectWorkspace({
   const [addServiceOpen, setAddServiceOpen] = useState(false);
   const [logsState, setLogsState] = useState<LogSnapshotResult | null>(null);
   const [statsState, setStatsState] = useState<StatsSnapshotResult | null>(null);
+  // Rolling window kept client-side only (resets on reload/container switch) -
+  // just enough to make "is this slowly climbing" visible as a sparkline
+  // instead of a single instantaneous number.
+  const [statsHistory, setStatsHistory] = useState<ContainerStats[]>([]);
+  const [driftFindings, setDriftFindings] = useState<DriftFinding[]>([]);
   // Toggling a compose-file checkbox round-trips through main (reload +
   // reparse every active YAML file), which is noticeable enough that driving
   // `checked` off the store snapshot alone made the control feel unresponsive.
@@ -289,17 +299,23 @@ export function ProjectWorkspace({
     const isRunning = selectedService?.details?.runtimeState.running;
     if (detailTab !== "overview" || !containerId || !isRunning) {
       setStatsState(null);
+      setStatsHistory([]);
       return;
     }
     const resolvedContainerId = containerId;
 
     setStatsState(null);
+    setStatsHistory([]);
     let cancelled = false;
 
     async function loadStats() {
       const result = await window.dockerExplorer.getServiceStats(resolvedContainerId);
       if (!cancelled) {
         setStatsState(result);
+        if (result.ok) {
+          const sample = result.data;
+          setStatsHistory((current) => [...current, sample].slice(-STATS_HISTORY_LENGTH));
+        }
       }
     }
 
@@ -315,6 +331,24 @@ export function ProjectWorkspace({
       }
     };
   }, [detailTab, selectedService?.details?.containerId, selectedService?.details?.runtimeState.running, settings?.statsPollSeconds]);
+
+  useEffect(() => {
+    if (!project || project.runtimeKind !== "compose" || project.access !== "editable") {
+      setDriftFindings([]);
+      return;
+    }
+
+    let cancelled = false;
+    void window.dockerExplorer.getConfigDrift(project.id).then((result) => {
+      if (!cancelled && result.ok) {
+        setDriftFindings(result.data.findings);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id]);
 
   if (!project) {
     return (
@@ -779,7 +813,8 @@ export function ProjectWorkspace({
                       ...(canAddService ? (["edit"] as const) : []),
                       "env",
                       "mounts",
-                      "logs"
+                      "logs",
+                      "shell"
                     ] as DetailTab[]
                   ).map((tab) => (
                     <button
@@ -793,7 +828,13 @@ export function ProjectWorkspace({
                 </div>
 
                 {detailTab === "overview" ? (
-                  <Inspector service={selectedService} uptimeLabel={uptimeLabel} stats={statsState?.ok ? statsState.data : undefined} />
+                  <Inspector
+                    service={selectedService}
+                    uptimeLabel={uptimeLabel}
+                    stats={statsState?.ok ? statsState.data : undefined}
+                    statsHistory={statsHistory}
+                    drift={driftFindings.filter((finding) => finding.serviceName === selectedService.name)}
+                  />
                 ) : null}
 
                 {detailTab === "edit" && canAddService ? (
@@ -883,6 +924,21 @@ export function ProjectWorkspace({
                     <div className="detail-list__row">
                       <span className="mono-key">Logs</span>
                       <span className="mono-value">Runtime logs are not available for source-only services.</span>
+                    </div>
+                  )
+                ) : null}
+
+                {detailTab === "shell" ? (
+                  selectedService.details?.containerId ? (
+                    <ShellPanel
+                      key={selectedService.details.containerId}
+                      containerId={selectedService.details.containerId}
+                      running={Boolean(selectedService.details.runtimeState.running)}
+                    />
+                  ) : (
+                    <div className="detail-list__row">
+                      <span className="mono-key">Shell</span>
+                      <span className="mono-value">A shell needs a running container - source-only services don't have one.</span>
                     </div>
                   )
                 ) : null}

@@ -12,6 +12,7 @@ import type { ProjectService } from "./project-service";
 import { getNetworkTopology } from "./topology-service";
 import { runNetworkAction } from "./network-control-service";
 import { searchDockerHub } from "./docker-hub-service";
+import { checkImageUpdate } from "./image-update-service";
 
 // This exposes the same operations the desktop app performs (project/
 // container control, network topology control - including toggling VM/
@@ -292,6 +293,29 @@ async function routeApi(
       return;
     }
     send(200, await projectService.saveSourceFile(projectId, filePath, sourceText, expectedHash));
+    return;
+  }
+
+  if (url.pathname === "/api/config-drift" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const projectId = isRecord(body) ? body.projectId : undefined;
+    if (typeof projectId !== "string") {
+      send(400, { message: "Invalid config-drift request." });
+      return;
+    }
+    send(200, await projectService.getConfigDrift(projectId));
+    return;
+  }
+
+  if (url.pathname === "/api/check-image-update" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const image = isRecord(body) ? body.image : undefined;
+    if (typeof image !== "string" || image.trim() === "") {
+      send(200, { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid image reference." } });
+      return;
+    }
+    const info = await checkImageUpdate(image);
+    send(200, { ok: true, data: { info } });
     return;
   }
 

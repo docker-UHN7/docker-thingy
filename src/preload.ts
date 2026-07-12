@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSnapshot, OperationEvent, PreloadApi, PullProgressEvent } from "./shared/contracts";
+import type { AppSnapshot, ExecExitEvent, ExecOutputEvent, OperationEvent, PreloadApi, PullProgressEvent } from "./shared/contracts";
 import type { NetworkPreloadApi } from "./shared/network-contracts";
 import type { RemoteAccessPreloadApi } from "./shared/remote-access-contracts";
 import { IPC_CHANNELS } from "./shared/ipc-channels";
@@ -83,6 +83,23 @@ const api: PreloadApi & NetworkPreloadApi & RemoteAccessPreloadApi = {
     ipcRenderer.on(IPC_CHANNELS.PULL_PROGRESS_EVENT, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.PULL_PROGRESS_EVENT, handler);
   },
+  startContainerExec: (containerId) => ipcRenderer.invoke(IPC_CHANNELS.EXEC_START, containerId),
+  writeContainerExec: (sessionId, data) => ipcRenderer.invoke(IPC_CHANNELS.EXEC_WRITE, sessionId, data),
+  stopContainerExec: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.EXEC_STOP, sessionId),
+  subscribeExecOutput: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: ExecOutputEvent) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.EXEC_OUTPUT_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.EXEC_OUTPUT_EVENT, handler);
+  },
+  subscribeExecExit: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: ExecExitEvent) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.EXEC_EXIT_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.EXEC_EXIT_EVENT, handler);
+  },
+  getConfigDrift: (projectId) => ipcRenderer.invoke(IPC_CHANNELS.GET_CONFIG_DRIFT, projectId),
+  checkImageUpdate: (image) => ipcRenderer.invoke(IPC_CHANNELS.CHECK_IMAGE_UPDATE, image),
+  backupVolume: (volumeName) => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_VOLUME, volumeName),
+  restoreVolume: (volumeName) => ipcRenderer.invoke(IPC_CHANNELS.RESTORE_VOLUME, volumeName),
   getNetworkTopology: () => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_GET_TOPOLOGY),
   runNetworkAction: (request) => ipcRenderer.invoke(IPC_CHANNELS.NETWORK_RUN_ACTION, request),
   getRemoteAccessStatus: () => ipcRenderer.invoke(IPC_CHANNELS.REMOTE_ACCESS_GET_STATUS),

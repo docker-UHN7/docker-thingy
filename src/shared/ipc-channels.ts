@@ -33,5 +33,14 @@ export const IPC_CHANNELS = {
   REMOTE_ACCESS_DISABLE: "remote-access:disable",
   REMOTE_ACCESS_REGENERATE_TOKEN: "remote-access:regenerate-token",
   REMOTE_ACCESS_SET_HOST: "remote-access:set-host",
-  COPY_TO_CLIPBOARD: "app:copy-to-clipboard"
+  COPY_TO_CLIPBOARD: "app:copy-to-clipboard",
+  EXEC_START: "exec:start",
+  EXEC_WRITE: "exec:write",
+  EXEC_STOP: "exec:stop",
+  EXEC_OUTPUT_EVENT: "exec:output-event",
+  EXEC_EXIT_EVENT: "exec:exit-event",
+  GET_CONFIG_DRIFT: "app:get-config-drift",
+  CHECK_IMAGE_UPDATE: "app:check-image-update",
+  BACKUP_VOLUME: "app:backup-volume",
+  RESTORE_VOLUME: "app:restore-volume"
 } as const;
